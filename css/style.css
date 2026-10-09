@@ -424,8 +424,10 @@ td { font-variant-numeric: tabular-nums; }
 .goal-top, .goal-sub { display: flex; justify-content: space-between; font-size: 14px; }
 .goal-top b { font-variant-numeric: tabular-nums; }
 .goal-sub { color: var(--ink-3); font-size: 12px; margin-top: 4px; }
-.bar { height: 10px; border-radius: 999px; background: var(--surface-2); margin-top: 6px; overflow: hidden; }
-.bar span { display: block; height: 100%; border-radius: 999px; background: var(--c); }
+.bar { position: relative; height: 10px; border-radius: 999px; background: var(--surface-2); margin-top: 6px; overflow: hidden; }
+.bar span { position: absolute; left: 0; top: 0; height: 100%; border-radius: 999px; background: var(--c); }
+.bar span.total { opacity: 0.3; }
+.goal-sub.total { margin-top: 1px; opacity: 0.75; }
 
 /* ---------- timer ---------- */
 
