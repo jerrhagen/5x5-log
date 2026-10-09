@@ -1,0 +1,11 @@
+{
+  "name": "5x5-log",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Träningslogg för 5x5 – statisk webbapp (PWA)",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "npx http-server -c-1 -p 8080 ."
+  }
+}
