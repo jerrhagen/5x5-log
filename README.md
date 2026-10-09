@@ -7,7 +7,9 @@ En enkel träningslogg för StrongLifts-liknande 5x5 som fungerar på både dato
   - Klarade du alla set förra gången föreslås +2,5 kg (marklyft +5 kg).
   - Missade du reps föreslås samma vikt.
   - Efter 3 missade pass i rad på samma vikt föreslås deload −10 %.
+  - Efter ett uppehåll sänks förslaget automatiskt: −10 % per 14 dagar utan träning (max −50 %).
   - Allt detta går att ändra under Inställningar.
+- **Lättare pass**: en knapp i passvyn som sänker alla vikter 10 % under senaste vikten, för en lugnare period. Progressionen bygger sedan upp igen därifrån, och passet märks med "Deload-pass" i kommentaren.
 - **Set-ringar**: tryck en gång för 5 reps, och tryck igen för att minska antalet (4, 3, … 0, tom).
 - **Vilotimer**: startar automatiskt när ett set är klart. Den är 3 min efter ett klarat set och 5 min efter ett missat. Du får ljud och vibration när det är dags. Skärmen hålls tänd medan timern går.
 - **Kommentar och kroppsvikt** kan läggas till per pass.

@@ -79,7 +79,9 @@ function renderLog() {
             <button class="step" data-act="w+" data-i="${i}" aria-label="Öka vikt">+</button>
           </div>
         </div>
-        <p class="hint ${sug.kind}">${icon} ${esc(sug.reason)}${differs ? ` <button class="link" data-act="use-sug" data-i="${i}">Använd ${kg(sug.weight)} kg</button>` : ''}</p>
+        ${d.deload
+    ? `<p class="hint deload">↓ Lättare pass – ${store.settings.deloadPct} % under senaste vikten</p>`
+    : `<p class="hint ${sug.kind}">${icon} ${esc(sug.reason)}${differs ? ` <button class="link" data-act="use-sug" data-i="${i}">Använd ${kg(sug.weight)} kg</button>` : ''}</p>`}
         <p class="sub">${last ? `Förra: ${kg(last.e.weight)} kg · ${setsLabel(last.e)} · ${fmtDate(last.s.date, { day: 'numeric', month: 'short' })}` : 'Inga tidigare pass'} · Per sida: ${plateText}</p>
         <div class="sets" role="group" aria-label="Set för ${esc(e.name)}">${sets}</div>
       </article>`;
@@ -99,6 +101,10 @@ function renderLog() {
       <label class="date-field"><span class="sr">Datum</span><input type="date" data-field="date" value="${d.date}"></label>
       ${syncPill()}
     </div>
+    <button class="deload-toggle" data-act="deload" aria-pressed="${Boolean(d.deload)}">
+      <span class="dt-text"><b>Lättare pass</b><small>Deload −${kg(store.settings.deloadPct)} % på alla övningar – för en lugnare period</small></span>
+      <span class="switch" aria-hidden="true"></span>
+    </button>
     ${cards}
     <section class="card">
       <label class="field"><span>Kommentar</span>
@@ -150,6 +156,33 @@ function tapSet(i, j) {
   }
 }
 
+function withDeloadNote(comment, deload) {
+  if (!deload || /deload/i.test(comment)) return comment;
+  return comment ? `Deload-pass · ${comment}` : 'Deload-pass';
+}
+
+function toggleDeload() {
+  draft.deload = !draft.deload;
+  for (const e of draft.exercises) {
+    e.weight = draft.deload
+      ? L.manualDeload(otherSessions(), e.key, store.settings, draft.date)
+      : L.suggest(otherSessions(), e.key, store.settings, draft.date).weight;
+  }
+  touch();
+  renderLog();
+  toast(draft.deload ? 'Lättare pass – vikterna är sänkta' : 'Tillbaka till föreslagna vikter');
+}
+
+// Nytt datum ger nya förslag (t.ex. deload efter uppehåll). Vikter man själv ändrat lämnas orörda.
+function changeDate(date) {
+  const target = (e, d) => (draft.deload
+    ? L.manualDeload(otherSessions(), e.key, store.settings, d)
+    : L.suggest(otherSessions(), e.key, store.settings, d).weight);
+  const untouched = draft.exercises.map((e) => e.weight === target(e, draft.date));
+  draft.date = date;
+  draft.exercises.forEach((e, i) => { if (untouched[i]) e.weight = target(e, date); });
+}
+
 function saveSession() {
   const exercises = draft.exercises
     .filter((e) => e.sets.some((r) => r != null))
@@ -162,7 +195,7 @@ function saveSession() {
     id: draft.id,
     date: draft.date,
     workout: draft.workout,
-    comment: (draft.comment || '').trim(),
+    comment: withDeloadNote((draft.comment || '').trim(), draft.deload),
     bodyweight: draft.bodyweight ?? null,
     exercises,
   };
@@ -497,6 +530,8 @@ function renderSettings() {
       <p class="sub">Ökning och startvikt i kg. Mål × = målvikt som faktor av kroppsvikten.</p>
       ${numInput('deloadPct', 'Deload', 1, '%')}
       ${numInput('failsBeforeDeload', 'Missade pass i rad innan deload', 1)}
+      ${numInput('breakDays', 'Deload efter uppehåll på', 1, 'dagar')}
+      <p class="sub">Efter ett uppehåll sänks vikten med deload-procenten per hel period (t.ex. 14 dagar → −10 %, 28 dagar → −20 %, max −50 %). 0 = av.</p>
       ${numInput('bodyweight', 'Kroppsvikt för mål', 'any', 'kg')}
       <label class="field"><span>Måltext</span><input data-setting="goalNote" value="${esc(s.goalNote || '')}"></label>
       <p class="sub">Senast loggade kroppsvikt i ett pass används före värdet ovan.</p>
@@ -651,6 +686,7 @@ document.addEventListener('click', async (ev) => {
     case 'set': return tapSet(i, Number(b.dataset.j));
     case 'w-': return changeWeight(i, -1);
     case 'w+': return changeWeight(i, 1);
+    case 'deload': return toggleDeload();
     case 'use-sug': {
       const e = draft.exercises[i];
       e.weight = L.suggest(otherSessions(), e.key, store.settings, draft.date).weight;
@@ -747,7 +783,7 @@ document.addEventListener('change', (ev) => {
       const v = L.parseNum(el.value);
       if (v != null && v >= 0) draft.exercises[Number(el.dataset.i)].weight = v;
     } else if (f === 'date') {
-      if (el.value) draft.date = el.value;
+      if (el.value) changeDate(el.value);
     } else if (f === 'bodyweight') {
       draft.bodyweight = L.parseNum(el.value);
     } else if (f === 'comment') {

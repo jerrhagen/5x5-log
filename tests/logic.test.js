@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  suggest, nextWorkout, cycleReps, platesPerSide, parseDelimited, importRows,
+  suggest, manualDeload, nextWorkout, cycleReps, platesPerSide, parseDelimited, importRows,
   toCsv, mergeSessions, buildSession, normalizeDate, parseReps, DEFAULT_SETTINGS,
 } from '../js/logic.js';
 
@@ -10,6 +10,8 @@ const sess = (date, workout, exs) => ({
   exercises: exs.map(([key, weight, sets]) => ({ key, name: key, weight, targetReps: 5, sets })),
 });
 const ok = [5, 5, 5, 5, 5];
+// Förslag dagen efter sista testpasset (utan att uppehållsregeln slår till)
+const sug = (s, k) => suggest(s, k, DEFAULT_SETTINGS, '2026-01-07');
 const miss = [5, 5, 4, 3, 3];
 
 test('startvikt utan historik', () => {
@@ -19,21 +21,21 @@ test('startvikt utan historik', () => {
 
 test('ökar efter lyckat pass', () => {
   const s = [sess('2026-01-01', 'A', [['squat', 100, ok]])];
-  assert.equal(suggest(s, 'squat').weight, 102.5);
+  assert.equal(sug(s, 'squat').weight, 102.5);
   const d = [sess('2026-01-01', 'B', [['deadlift', 120, [5]]])];
-  assert.equal(suggest(d, 'deadlift').weight, 125);
+  assert.equal(sug(d, 'deadlift').weight, 125);
 });
 
 test('samma vikt efter miss, deload efter tre missar', () => {
   const s1 = [sess('2026-01-01', 'A', [['squat', 100, miss]])];
-  assert.equal(suggest(s1, 'squat').weight, 100);
-  assert.equal(suggest(s1, 'squat').kind, 'same');
+  assert.equal(sug(s1, 'squat').weight, 100);
+  assert.equal(sug(s1, 'squat').kind, 'same');
   const s3 = [
     sess('2026-01-01', 'A', [['squat', 100, miss]]),
     sess('2026-01-03', 'B', [['squat', 100, miss]]),
     sess('2026-01-05', 'A', [['squat', 100, miss]]),
   ];
-  const r = suggest(s3, 'squat');
+  const r = sug(s3, 'squat');
   assert.equal(r.kind, 'deload');
   assert.equal(r.weight, 90);
 });
@@ -44,7 +46,7 @@ test('miss på ny vikt räknas inte ihop med gamla vikten', () => {
     sess('2026-01-03', 'B', [['squat', 97.5, miss]]),
     sess('2026-01-05', 'A', [['squat', 100, miss]]),
   ];
-  assert.equal(suggest(s, 'squat').kind, 'same');
+  assert.equal(sug(s, 'squat').kind, 'same');
 });
 
 test('suggest ignorerar pass på eller efter angivet datum', () => {
@@ -110,4 +112,20 @@ test('merge – senast uppdaterad vinner', () => {
   const b = { id: 'x', updatedAt: 2, v: 'b' };
   assert.equal(mergeSessions([a], [b])[0].v, 'b');
   assert.equal(mergeSessions([b], [a])[0].v, 'b');
+});
+
+test('deload efter uppehåll', () => {
+  const s = [sess('2026-01-01', 'A', [['squat', 100, ok]])];
+  assert.equal(suggest(s, 'squat', DEFAULT_SETTINGS, '2026-01-10').kind, 'up');
+  const r2 = suggest(s, 'squat', DEFAULT_SETTINGS, '2026-01-20'); // 19 dagar
+  assert.equal(r2.kind, 'deload');
+  assert.equal(r2.weight, 90);
+  assert.equal(suggest(s, 'squat', DEFAULT_SETTINGS, '2026-02-05').weight, 80); // 35 dagar → −20 %
+  assert.equal(suggest(s, 'squat', { ...DEFAULT_SETTINGS, breakDays: 0 }, '2026-06-01').kind, 'up');
+});
+
+test('manuell deload utgår från senaste vikten', () => {
+  const s = [sess('2026-01-01', 'A', [['squat', 100, ok]])];
+  assert.equal(manualDeload(s, 'squat', DEFAULT_SETTINGS, '2026-01-03'), 90);
+  assert.equal(manualDeload([], 'squat', DEFAULT_SETTINGS, '2026-01-03'), 20);
 });

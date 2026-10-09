@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS = {
   ),
   deloadPct: 10,
   failsBeforeDeload: 3,
+  breakDays: 14,
   restSuccess: 180,
   restFail: 300,
   barWeight: 20,
@@ -99,32 +100,59 @@ function exSettings(settings, key) {
 
 // Föreslagen vikt enligt StrongLifts-logik:
 // klarade alla set → öka, missade → samma vikt, N missar i rad på samma vikt → deload.
+export function deloadWeight(weight, settings = DEFAULT_SETTINGS, pct = settings.deloadPct ?? 10) {
+  return Math.max(settings.barWeight ?? 20, roundTo(weight * (1 - pct / 100), 2.5));
+}
+
+const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+
+// Föreslagen vikt enligt StrongLifts-logik:
+//  • långt uppehåll → deload (deloadPct per påbörjad period om breakDays dagar, max 50 %)
+//  • klarade alla set → öka
+//  • missade → samma vikt, N missar i rad på samma vikt → deload
 export function suggest(sessions, key, settings = DEFAULT_SETTINGS, beforeDate = null) {
   const { inc, start } = exSettings(settings, key);
   const history = sortByDateDesc(liveSessions(sessions))
     .filter((s) => !beforeDate || s.date < beforeDate)
-    .map((s) => s.exercises.find((e) => e.key === key && e.sets.some((r) => r != null)))
-    .filter(Boolean);
+    .map((s) => ({ date: s.date, e: s.exercises.find((e) => e.key === key && e.sets.some((r) => r != null)) }))
+    .filter((x) => x.e);
 
   if (!history.length) return { weight: start, reason: 'Startvikt', kind: 'start' };
 
-  const last = history[0];
+  const last = history[0].e;
+  const pct = settings.deloadPct ?? 10;
+  const breakDays = settings.breakDays ?? 14;
+  const gap = daysBetween(history[0].date, beforeDate || todayISO());
+  if (breakDays > 0 && gap >= breakDays) {
+    const p = Math.min(50, pct * Math.floor(gap / breakDays));
+    const weeks = Math.round(gap / 7);
+    return { weight: deloadWeight(last.weight, settings, p), reason: `Deload −${p} % efter ${weeks} veckors uppehåll`, kind: 'deload' };
+  }
+
   if (isSuccess(last)) {
     return { weight: last.weight + inc, reason: `+${fmtKg(inc)} kg – klarade alla set förra gången`, kind: 'up' };
   }
 
   let fails = 0;
-  for (const e of history) {
+  for (const { e } of history) {
     if (e.weight !== last.weight || isSuccess(e)) break;
     fails++;
   }
   const limit = settings.failsBeforeDeload ?? 3;
   if (fails >= limit) {
-    const pct = settings.deloadPct ?? 10;
-    const w = Math.max(settings.barWeight ?? 20, roundTo(last.weight * (1 - pct / 100), 2.5));
-    return { weight: w, reason: `Deload −${pct} % efter ${fails} missade pass i rad`, kind: 'deload' };
+    return { weight: deloadWeight(last.weight, settings), reason: `Deload −${pct} % efter ${fails} missade pass i rad`, kind: 'deload' };
   }
   return { weight: last.weight, reason: `Samma vikt – försök ${fails + 1} av ${limit}`, kind: 'same' };
+}
+
+// Manuell deload ("lugnare period"): utgå från senast lyfta vikt, men aldrig högre än förslaget.
+export function manualDeload(sessions, key, settings = DEFAULT_SETTINGS, beforeDate = null) {
+  const sug = suggest(sessions, key, settings, beforeDate);
+  const last = sortByDateDesc(liveSessions(sessions))
+    .filter((s) => !beforeDate || s.date < beforeDate)
+    .map((s) => s.exercises.find((e) => e.key === key && e.sets.some((r) => r != null)))
+    .find(Boolean);
+  return Math.min(sug.weight, deloadWeight(last ? last.weight : sug.weight, settings));
 }
 
 export function buildSession(sessions, workout, settings = DEFAULT_SETTINGS, date = todayISO()) {
