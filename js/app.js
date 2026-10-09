@@ -403,6 +403,8 @@ function renderProgress() {
   // Mål (kroppsvikt × faktor) – som i målsektionen i arket
   const bw = currentBodyweight();
   const prs = L.personalRecords(store.sessions);
+  const e1rmBest = Object.fromEntries(L.seriesByExercise(store.sessions)
+    .map((x) => [x.key, Math.max(...x.points.map((p) => p.e1rm || 0))]));
   const goals = L.EXERCISE_ORDER.map((key) => {
     const factor = store.settings.goalFactors?.[key];
     if (!factor || !bw) return '';
@@ -413,7 +415,7 @@ function renderProgress() {
     return `<div class="goal" style="--c:${colorOf(key)}">
       <div class="goal-top"><span><span class="swatch"></span>${L.EXERCISES[key].name}</span><span><b>${kg(best)}</b> / ${kg(goal)} kg</span></div>
       <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${L.EXERCISES[key].name} ${pct} % av målet"><span style="width:${pct}%"></span></div>
-      <div class="goal-sub"><span>${kg(factor)} × kroppsvikt</span><span>${pct} %</span></div>
+      <div class="goal-sub"><span>${kg(factor)} × kroppsvikt${e1rmBest[key] ? ` · uppskattat 1RM ≈ ${Math.round(e1rmBest[key])} kg` : ''}</span><span>${pct} %</span></div>
     </div>`;
   }).join('');
 
@@ -448,7 +450,7 @@ function renderProgress() {
     </section>
     <section class="card">
       <h2>Mål</h2>
-      <p class="sub">${esc(store.settings.goalNote || '')}${store.settings.goalNote ? ' · ' : ''}Kroppsvikt ${kg(bw)} kg · bästa klarade vikt</p>
+      <p class="sub">${esc(store.settings.goalNote || '')}${store.settings.goalNote ? ' · ' : ''}Kroppsvikt ${kg(bw)} kg · bästa klarade 5x5-vikt. 1RM är uppskattat från dina set (Epleys formel).</p>
       ${goals || '<p class="sub">Ställ in kroppsvikt och faktorer under Inställningar.</p>'}
     </section>
     ${bwPoints.length >= 2 ? `<section class="card">
