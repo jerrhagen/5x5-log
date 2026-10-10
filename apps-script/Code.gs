@@ -4,7 +4,8 @@
  * Installeras i ditt kalkylark ("Biff"): Tillägg → Apps Script, klistra in hela filen,
  * byt TOKEN nedan och publicera som webbapp (se README.md).
  *
- * Appen sparar sina pass i fliken "Logg" (en rad per övning). Om SKRIV_TILL_ARSFLIK
+ * Appen sparar sina pass i fliken "Logg" (en rad per övning) och mål/inställningar i fliken
+ * "Inställningar", så att alla enheter ser exakt samma sak. Om SKRIV_TILL_ARSFLIK
  * är true skrivs vikterna dessutom in på rätt datumrad i din årsflik (t.ex. "2026"),
  * så att dina befintliga grafer i arket fortsätter att uppdateras.
  */
@@ -13,6 +14,8 @@ const TOKEN = 'BYT-TILL-EN-EGEN-HEMLIG-NYCKEL';
 const SKRIV_TILL_ARSFLIK = true;
 
 const LOGG = 'Logg';
+const INST = 'Inställningar';
+const UPPDATERAD = '_uppdaterad';
 const HEADERS = ['id', 'datum', 'pass', 'övning', 'vikt', 'reps', 'kommentar', 'kroppsvikt', 'uppdaterad'];
 
 const ALIASES = {
@@ -47,8 +50,18 @@ function handle_(req) {
     switch (req.action) {
       case 'ping':
         return json_({ ok: true, name: SpreadsheetApp.getActive().getName() });
-      case 'list':
-        return json_({ ok: true, sessions: readSessions_() });
+      case 'list': {
+        const st = readSettings_();
+        return json_({ ok: true, sessions: readSessions_(), settings: st.settings, settingsUpdatedAt: st.updatedAt });
+      }
+      case 'saveSettings': {
+        const cur = readSettings_();
+        if (cur.settings && cur.updatedAt > (req.updatedAt || 0)) {
+          return json_({ ok: true, saved: false, settings: cur.settings, updatedAt: cur.updatedAt });
+        }
+        writeSettings_(req.settings || {}, req.updatedAt || Date.now());
+        return json_({ ok: true, saved: true });
+      }
       case 'upsert': {
         const sessions = req.sessions || [];
         upsert_(sessions);
@@ -162,11 +175,76 @@ function remove_(ids) {
   }));
 }
 
+// ---------- Fliken "Inställningar" ----------
+// En rad per inställning: nyckel (t.ex. "goalFactors.squat") och värde som JSON (t.ex. 1.5).
+
+function settingsSheet_() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName(INST);
+  if (!sh) {
+    sh = ss.insertSheet(INST);
+    sh.getRange('A:B').setNumberFormat('@');
+    sh.getRange(1, 1, 1, 2).setValues([['nyckel', 'värde']]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function readSettings_() {
+  const sh = settingsSheet_();
+  const n = sh.getLastRow() - 1;
+  const out = { settings: null, updatedAt: 0 };
+  if (n < 1) return out;
+  const obj = {};
+  sh.getRange(2, 1, n, 2).getDisplayValues().forEach(function (r) {
+    const key = String(r[0]).trim();
+    if (!key) return;
+    if (key === UPPDATERAD) { out.updatedAt = Number(r[1]) || 0; return; }
+    let v = r[1];
+    try { v = JSON.parse(v); } catch (err) { /* vanlig text, t.ex. inskriven för hand */ }
+    const parts = key.split('.');
+    let o = obj;
+    for (let i = 0; i < parts.length - 1; i++) o = o[parts[i]] = o[parts[i]] || {};
+    o[parts[parts.length - 1]] = v;
+  });
+  if (Object.keys(obj).length) out.settings = obj;
+  return out;
+}
+
+function writeSettings_(settings, updatedAt) {
+  const rows = [];
+  (function flat(o, prefix) {
+    Object.keys(o).sort().forEach(function (k) {
+      const v = o[k];
+      if (v && typeof v === 'object' && !Array.isArray(v)) flat(v, prefix + k + '.');
+      else rows.push([prefix + k, JSON.stringify(v)]);
+    });
+  })(settings, '');
+  rows.push([UPPDATERAD, String(updatedAt)]);
+  const sh = settingsSheet_();
+  const last = sh.getLastRow();
+  if (last > 1) sh.getRange(2, 1, last - 1, 2).clearContent();
+  sh.getRange(2, 1, rows.length, 2).setValues(rows);
+}
+
+// Ändrar du en inställning direkt i arket markeras den som ny, så att apparna hämtar den.
+function onEdit(e) {
+  const sh = e && e.range && e.range.getSheet();
+  if (!sh || sh.getName() !== INST || e.range.getRow() < 2) return;
+  const keys = sh.getRange(2, 1, Math.max(1, sh.getLastRow() - 1), 1).getDisplayValues();
+  for (let i = 0; i < keys.length; i++) {
+    if (keys[i][0] === UPPDATERAD) {
+      sh.getRange(i + 2, 2).setValue(String(Date.now()));
+      return;
+    }
+  }
+}
+
 // ---------- Övriga flikar (import + årsflik) ----------
 
 function readTabs_() {
   return SpreadsheetApp.getActive().getSheets()
-    .filter(function (sh) { return sh.getName() !== LOGG && sh.getLastRow() > 0; })
+    .filter(function (sh) { return sh.getName() !== LOGG && sh.getName() !== INST && sh.getLastRow() > 0; })
     .map(function (sh) {
       return { name: sh.getName(), rows: sh.getRange(1, 1, sh.getLastRow(), Math.max(1, sh.getLastColumn())).getDisplayValues() };
     });
@@ -204,7 +282,7 @@ function yearSection_(sh) {
 
 function yearSections_() {
   return SpreadsheetApp.getActive().getSheets()
-    .filter(function (sh) { return sh.getName() !== LOGG; })
+    .filter(function (sh) { return sh.getName() !== LOGG && sh.getName() !== INST; })
     .map(yearSection_)
     .filter(function (x) { return x && x.first; })
     .sort(function (a, b) { return a.first < b.first ? 1 : -1; });

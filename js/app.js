@@ -121,11 +121,15 @@ function renderLog() {
     <p class="tip">Tryck på en ring när setet är klart (5 reps). Tryck igen för att minska antalet reps. Vilotimern startar automatiskt.</p>`;
 }
 
+function pendingCount() {
+  return store.sessions.filter((s) => !s.synced).length + store.pending.deletes.length + (store.settingsMeta.dirty ? 1 : 0);
+}
+
 function syncPill() {
   if (!store.syncEnabled) return '<button class="pill" data-act="goto-settings">Bara lokalt – koppla Google-arket</button>';
   if (syncState.busy) return '<span class="pill">Synkar …</span>';
   if (syncState.error) return `<button class="pill warn" data-act="sync-now" title="${esc(syncState.error)}">⚠ Synkfel – försök igen</button>`;
-  const pending = store.sessions.filter((s) => !s.synced).length + store.pending.deletes.length;
+  const pending = pendingCount();
   if (pending) return `<button class="pill" data-act="sync-now">${pending} osynkade – synka</button>`;
   return '<span class="pill ok">✓ Synkat med arket</span>';
 }
@@ -516,7 +520,7 @@ function numInput(path, label, step = 'any', unit = '') {
 
 function renderSettings() {
   const s = store.settings;
-  const pending = store.sessions.filter((x) => !x.synced).length + store.pending.deletes.length;
+  const pending = pendingCount();
   const lift = (key) => `<tr><th scope="row"><span class="swatch" style="--c:${colorOf(key)}"></span>${L.EXERCISES[key].name}</th>
     <td><input data-setting="exercises.${key}.inc" data-type="num" inputmode="decimal" value="${kg(s.exercises[key].inc)}" aria-label="Ökning ${L.EXERCISES[key].name}"></td>
     <td><input data-setting="exercises.${key}.start" data-type="num" inputmode="decimal" value="${kg(s.exercises[key].start)}" aria-label="Startvikt ${L.EXERCISES[key].name}"></td>
@@ -527,7 +531,7 @@ function renderSettings() {
 
     <section class="card">
       <h2>Synk med Google-arket</h2>
-      <p class="sub">Passen sparas alltid på enheten. Med synk sparas de också i fliken <b>Logg</b> i ditt kalkylark, skrivs in på rätt datum i årsfliken och syns på både dator och mobil. Instruktioner finns i README.</p>
+      <p class="sub">Passen sparas alltid på enheten. Med synk sparas de också i fliken <b>Logg</b> i ditt kalkylark och syns på både dator och mobil. Mål och inställningar sparas i fliken <b>Inställningar</b>, så alla enheter blir likadana (adress och nyckel fylls i per enhet). Instruktioner finns i README.</p>
       <label class="field"><span>Webbapp-URL</span>
         <input data-setting="syncUrl" type="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(s.syncUrl)}"></label>
       <label class="field"><span>Nyckel (TOKEN i Code.gs)</span>
@@ -585,7 +589,8 @@ function syncStatusText(pending) {
   if (!store.syncEnabled) return 'Synk är inte inställd.';
   const when = store.lastSync ? new Date(store.lastSync).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' }) : 'aldrig';
   const err = syncState.error ? ` · ⚠ ${esc(syncState.error)}` : '';
-  return `Senast synkad: ${when}${pending ? ` · ${pending} ändringar väntar` : ''}${err}`;
+  const old = store.settingsUnsupported ? ' · ⚠ Inställningarna synkas inte – uppdatera Code.gs i arket (se README)' : '';
+  return `Senast synkad: ${when}${pending ? ` · ${pending} ändringar väntar` : ''}${err}${old}`;
 }
 
 function setSetting(path, value) {
@@ -594,6 +599,16 @@ function setSetting(path, value) {
   for (const k of keys.slice(0, -1)) o = o[k] ||= {};
   o[keys.at(-1)] = value;
   store.saveSettings();
+  // Adress och nyckel är per enhet och ska inte räknas som en synkad ändring.
+  if (path !== 'syncUrl' && path !== 'syncToken') settingsChanged();
+}
+
+// Inställningar (även grafval) synkas till arket strax efter en ändring.
+let settingsSyncTimer;
+function settingsChanged() {
+  store.touchSettings();
+  clearTimeout(settingsSyncTimer);
+  settingsSyncTimer = setTimeout(runSync, 1500);
 }
 
 // ---------------------------------------------------------------- import/export
@@ -659,7 +674,7 @@ function refreshSyncUi() {
   const pill = $('#view-log .pill');
   if (pill) pill.outerHTML = syncPill();
   const st = $('#sync-status');
-  if (st) st.innerHTML = syncStatusText(store.sessions.filter((x) => !x.synced).length + store.pending.deletes.length);
+  if (st) st.innerHTML = syncStatusText(pendingCount());
 }
 
 // ---------------------------------------------------------------- navigering
@@ -740,13 +755,14 @@ document.addEventListener('click', async (ev) => {
     case 'edit': return editSession(b.dataset.id);
     case 'delete': return deleteSession(b.dataset.id);
     case 'more': historyLimit += 30; return renderHistory();
-    case 'range': store.ui.range = b.dataset.range; store.saveUi(); return renderProgress();
+    case 'range': store.ui.range = b.dataset.range; store.saveUi(); settingsChanged(); return renderProgress();
     case 'toggle-lift': {
       const h = new Set(store.ui.hiddenLifts || []);
       if (h.has(b.dataset.key)) h.delete(b.dataset.key);
       else h.add(b.dataset.key);
       store.ui.hiddenLifts = [...h];
       store.saveUi();
+      settingsChanged();
       return renderProgress();
     }
     case 'goto-settings': return setTab('settings');

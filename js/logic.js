@@ -75,6 +75,30 @@ export function parseNum(v) {
   return m ? Number(m[1].replace(',', '.')) : null;
 }
 
+// Lägger sparade/synkade inställningar ovanpå standardvärdena och tvingar rätt typ
+// (värden från arket kan vara text, t.ex. "2,5").
+export function mergeSettings(base, over) {
+  const out = structuredClone(base);
+  for (const [k, v] of Object.entries(over || {})) {
+    const b = base[k];
+    if (b && typeof b === 'object' && !Array.isArray(b)) {
+      out[k] = mergeSettings(b, v && typeof v === 'object' ? v : {});
+    } else if (typeof b === 'number') {
+      const n = parseNum(v);
+      if (n != null) out[k] = n;
+    } else if (typeof b === 'boolean') {
+      out[k] = v === true || v === 'true';
+    } else if (Array.isArray(b)) {
+      if (Array.isArray(v)) out[k] = v.map(parseNum).filter((x) => x != null);
+    } else if (typeof b === 'string') {
+      out[k] = v == null ? '' : String(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 export function isSuccess(ex) {
   return ex.sets.length > 0 && ex.sets.every((r) => r != null && r >= ex.targetReps);
 }

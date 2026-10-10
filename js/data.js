@@ -1,5 +1,5 @@
 // Lokal lagring (localStorage) + synk mot Google Apps Script.
-import { DEFAULT_SETTINGS } from './logic.js';
+import { DEFAULT_SETTINGS, mergeSettings } from './logic.js';
 
 const K = {
   sessions: '5x5.sessions',
@@ -9,7 +9,11 @@ const K = {
   pending: '5x5.pending',
   lastSync: '5x5.lastSync',
   ui: '5x5.ui',
+  settingsMeta: '5x5.settingsMeta',
 };
+
+// Allt utom adress och nyckel synkas mellan enheter (fliken "Inställningar").
+const LOCAL_ONLY = ['syncUrl', 'syncToken'];
 
 function read(key, fallback) {
   try {
@@ -29,21 +33,10 @@ function write(key, value) {
   }
 }
 
-function mergeDeep(base, over) {
-  const out = structuredClone(base);
-  for (const [k, v] of Object.entries(over || {})) {
-    if (v && typeof v === 'object' && !Array.isArray(v) && typeof out[k] === 'object' && !Array.isArray(out[k])) {
-      out[k] = mergeDeep(out[k], v);
-    } else {
-      out[k] = v;
-    }
-  }
-  return out;
-}
-
 export const store = {
   sessions: read(K.sessions, []),
-  settings: mergeDeep(DEFAULT_SETTINGS, read(K.settings, {})),
+  settings: mergeSettings(DEFAULT_SETTINGS, read(K.settings, {})),
+  settingsMeta: read(K.settingsMeta, { updatedAt: 0, dirty: false }),
   pending: read(K.pending, { deletes: [] }),
   lastSync: read(K.lastSync, null),
   ui: read(K.ui, {}),
@@ -52,6 +45,33 @@ export const store = {
   saveSettings() { write(K.settings, this.settings); },
   savePending() { write(K.pending, this.pending); },
   saveUi() { write(K.ui, this.ui); },
+
+  // Markera att inställningarna ändrats på den här enheten (synkas vid nästa synk).
+  touchSettings() {
+    this.settingsMeta = { updatedAt: Date.now(), dirty: true };
+    write(K.settingsMeta, this.settingsMeta);
+  },
+
+  syncedSettings() {
+    const out = structuredClone(this.settings);
+    for (const k of LOCAL_ONLY) delete out[k];
+    out.ui = { range: this.ui.range || '1y', hiddenLifts: this.ui.hiddenLifts || [] };
+    return out;
+  },
+
+  applyRemoteSettings(remote, updatedAt) {
+    const { ui, ...rest } = remote || {};
+    const local = Object.fromEntries(LOCAL_ONLY.map((k) => [k, this.settings[k]]));
+    this.settings = { ...mergeSettings(DEFAULT_SETTINGS, rest), ...local };
+    if (ui && typeof ui === 'object') {
+      if (typeof ui.range === 'string') this.ui.range = ui.range;
+      if (Array.isArray(ui.hiddenLifts)) this.ui.hiddenLifts = ui.hiddenLifts;
+      this.saveUi();
+    }
+    this.saveSettings();
+    this.settingsMeta = { updatedAt, dirty: false };
+    write(K.settingsMeta, this.settingsMeta);
+  },
 
   getDraft() { return read(K.draft, null); },
   setDraft(d) { write(K.draft, d); },
@@ -95,6 +115,7 @@ export const store = {
     this.sessions = [];
     this.pending = { deletes: [] };
     this.lastSync = null;
+    this.settingsMeta = { updatedAt: 0, dirty: false };
   },
 
   get syncEnabled() {
@@ -144,7 +165,9 @@ async function doSync() {
     store.savePending();
   }
 
-  const remote = (await call({ action: 'list' })).sessions || [];
+  const listed = await call({ action: 'list' });
+  const remote = listed.sessions || [];
+  await syncSettings(listed);
   const remoteById = new Map(remote.map((s) => [s.id, s]));
   const next = [];
   const toPush = [];
@@ -179,6 +202,31 @@ async function doSync() {
   store.lastSync = Date.now();
   write(K.lastSync, store.lastSync);
   return { pushed: toPush.length, total: next.length };
+}
+
+// Senast ändrade vinner. Har arket inga inställningar än skickas den här enhetens.
+async function syncSettings(listed) {
+  if (!('settings' in listed)) {
+    store.settingsUnsupported = true; // gammal Code.gs utan stöd för inställningar
+    return;
+  }
+  store.settingsUnsupported = false;
+  const meta = store.settingsMeta;
+  const remoteAt = listed.settingsUpdatedAt || 0;
+  if (listed.settings && remoteAt > meta.updatedAt) {
+    store.applyRemoteSettings(listed.settings, remoteAt);
+    return;
+  }
+  if (!listed.settings || (meta.dirty && meta.updatedAt >= remoteAt)) {
+    const updatedAt = meta.updatedAt || 1;
+    const r = await call({ action: 'saveSettings', settings: store.syncedSettings(), updatedAt });
+    if (r.saved) {
+      store.settingsMeta = { updatedAt, dirty: false };
+      write(K.settingsMeta, store.settingsMeta);
+    } else {
+      store.applyRemoteSettings(r.settings, r.updatedAt);
+    }
+  }
 }
 
 export async function ping() {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  suggest, manualDeload, nextWorkout, cycleReps, platesPerSide, parseDelimited, importRows,
+  suggest, manualDeload, mergeSettings, nextWorkout, cycleReps, platesPerSide, parseDelimited, importRows,
   toCsv, mergeSessions, buildSession, normalizeDate, parseReps, DEFAULT_SETTINGS,
 } from '../js/logic.js';
 
@@ -128,4 +128,19 @@ test('manuell deload utgår från senaste vikten', () => {
   const s = [sess('2026-01-01', 'A', [['squat', 100, ok]])];
   assert.equal(manualDeload(s, 'squat', DEFAULT_SETTINGS, '2026-01-03'), 90);
   assert.equal(manualDeload([], 'squat', DEFAULT_SETTINGS, '2026-01-03'), 20);
+});
+
+test('inställningar från arket får rätt typ', () => {
+  const m = mergeSettings(DEFAULT_SETTINGS, {
+    deloadPct: '15', bodyweight: '84,5', sound: 'false', goalNote: 'Mål', exercises: { squat: { inc: '5' } },
+    goalFactors: { squat: 1.75 }, plates: ['20', '10'], restSuccess: 'abc',
+  });
+  assert.equal(m.deloadPct, 15);
+  assert.equal(m.bodyweight, 84.5);
+  assert.equal(m.sound, false);
+  assert.equal(m.exercises.squat.inc, 5);
+  assert.equal(m.exercises.bench.inc, 2.5);
+  assert.equal(m.goalFactors.squat, 1.75);
+  assert.deepEqual(m.plates, [20, 10]);
+  assert.equal(m.restSuccess, 180);
 });

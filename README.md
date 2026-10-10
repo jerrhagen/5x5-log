@@ -18,7 +18,7 @@ En enkel träningslogg för StrongLifts-liknande 5x5 som fungerar på både dato
   - Målsektion där målet är kroppsvikt × faktor och jämförs med ditt bästa klarade lyft.
   - Kroppsvikt över tid.
   - Tabellvy.
-- **Synk med Google Sheets**: passen sparas i ditt kalkylark. De syns på alla enheter och skrivs in på rätt datumrad i årsfliken, så att dina gamla grafer i arket fortsätter att uppdateras.
+- **Synk med Google Sheets**: passen, målen och alla inställningar sparas i ditt kalkylark, så dator och mobil blir exakt likadana. De syns på alla enheter och skrivs in på rätt datumrad i årsfliken, så att dina gamla grafer i arket fortsätter att uppdateras.
 - **Import** av historiken direkt från flikarna i arket, eller genom att klistra in/ladda upp CSV.
 
 All data sparas lokalt i webbläsaren och (om du kopplar på synk) i ditt eget Google-ark. Ingen träningsdata ligger i det här repot.
@@ -42,10 +42,11 @@ All data sparas lokalt i webbläsaren och (om du kopplar på synk) i ditt eget G
 Bra att veta:
 
 - Appen skapar en ny flik **Logg** med en rad per övning: datum, pass, vikt, reps per set, kommentar. Ändra inte i den fliken för hand.
+- Appen skapar också fliken **Inställningar** med en rad per inställning: mål, kroppsvikt, progression, vilotider och val i graferna. Ändrar du något i appen syns det på alla enheter vid nästa synk, och senaste ändringen vinner. Du kan också ändra värden direkt i fliken. Webbappens adress och nyckel synkas inte, de fylls i en gång per enhet.
 - När du sparar ett pass skrivs vikterna även in på datumraden i den nyaste årsfliken (kolumnerna Knäböj, Bänkpress …). Om du missade reps skrivs de i kolumnen *kommentarer*, t.ex. `Axelpress 5/5/5/5/4`. Vill du inte det, sätt `SKRIV_TILL_ARSFLIK = false`.
 - Om du tar bort ett pass i appen tas det bort från fliken Logg, men inte från årsflikens datumrad.
 - Importerad historik har bara vikter (arket har inga reps), så alla gamla pass räknas som klarade. Dina kommentarer följer med.
-- Har du ändrat i `Code.gs` behöver du göra **Driftsätt → Hantera driftsättningar → Redigera → Ny version** för att ändringen ska gälla.
+- Har du ändrat i `Code.gs`, eller klistrat in en nyare version från repot, behöver du göra **Driftsätt → Hantera driftsättningar → Redigera (penna) → Version: Ny version → Driftsätt** för att ändringen ska gälla. Adressen är densamma som förut.
 
 ## 2. Publicera webbplatsen
 
