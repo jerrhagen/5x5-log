@@ -128,12 +128,23 @@ export const store = {
 async function call(payload) {
   const { syncUrl, syncToken } = store.settings;
   // text/plain undviker CORS-preflight som Apps Script inte stödjer.
-  const res = await fetch(syncUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ ...payload, token: syncToken }),
-    redirect: 'follow',
-  });
+  // Avbryt anrop som hänger (t.ex. när mobilen bytt nät) så att synken inte fastnar.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 45000);
+  let res;
+  try {
+    res = await fetch(syncUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ ...payload, token: syncToken }),
+      redirect: 'follow',
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    throw new Error(err.name === 'AbortError' ? 'Arket svarade inte i tid' : err.message);
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   let data;
   try {
@@ -158,21 +169,27 @@ export function sync() {
   return running;
 }
 
+// Anropen mot Apps Script tar några sekunder. Allt som ändras under tiden (nya/ändrade/borttagna
+// pass, ändrade inställningar) ska överleva synken och skickas vid nästa.
 async function doSync() {
   if (store.pending.deletes.length) {
-    await call({ action: 'delete', ids: store.pending.deletes });
-    store.pending.deletes = [];
+    const ids = [...store.pending.deletes];
+    await call({ action: 'delete', ids });
+    store.pending.deletes = store.pending.deletes.filter((id) => !ids.includes(id));
     store.savePending();
   }
 
   const listed = await call({ action: 'list' });
   const remote = listed.sessions || [];
   await syncSettings(listed);
+
+  const snapshot = store.sessions;
+  const seen = new Set(snapshot);
   const remoteById = new Map(remote.map((s) => [s.id, s]));
   const next = [];
   const toPush = [];
 
-  for (const local of store.sessions) {
+  for (const local of snapshot) {
     const r = remoteById.get(local.id);
     if (r) {
       remoteById.delete(local.id);
@@ -197,11 +214,22 @@ async function doSync() {
   if (logged.length) await call({ action: 'upsert', sessions: logged.map(strip) });
   for (const s of toPush) s.synced = true;
 
-  store.sessions = next;
+  // Ta hänsyn till det som hänt lokalt medan vi väntade på arket.
+  const snapIds = new Set(snapshot.map((s) => s.id));
+  const currentIds = new Set(store.sessions.map((s) => s.id));
+  const merged = next.filter((s) => !snapIds.has(s.id) || currentIds.has(s.id)); // borttagna under synken
+  const index = new Map(merged.map((s, i) => [s.id, i]));
+  for (const s of store.sessions) {
+    if (seen.has(s)) continue; // oförändrad sedan synken började
+    if (index.has(s.id)) merged[index.get(s.id)] = s;
+    else merged.push(s);
+  }
+
+  store.sessions = merged;
   store.saveSessions();
   store.lastSync = Date.now();
   write(K.lastSync, store.lastSync);
-  return { pushed: toPush.length, total: next.length };
+  return { pushed: toPush.length, total: merged.length };
 }
 
 // Senast ändrade vinner. Har arket inga inställningar än skickas den här enhetens.
@@ -212,14 +240,17 @@ async function syncSettings(listed) {
   }
   store.settingsUnsupported = false;
   const meta = store.settingsMeta;
-  const remoteAt = listed.settingsUpdatedAt || 0;
-  if (listed.settings && remoteAt > meta.updatedAt) {
+  const localAt = Number(meta.updatedAt) || 0;
+  const remoteAt = Number(listed.settingsUpdatedAt) || 0;
+  if (listed.settings && remoteAt > localAt) {
     store.applyRemoteSettings(listed.settings, remoteAt);
     return;
   }
-  if (!listed.settings || (meta.dirty && meta.updatedAt >= remoteAt)) {
-    const updatedAt = meta.updatedAt || 1;
+  if (!listed.settings || meta.dirty) {
+    const updatedAt = localAt || 1;
     const r = await call({ action: 'saveSettings', settings: store.syncedSettings(), updatedAt });
+    // Ändrades inställningarna medan vi väntade? Då är de fortfarande osynkade och skickas nästa gång.
+    if (store.settingsMeta !== meta) return;
     if (r.saved) {
       store.settingsMeta = { updatedAt, dirty: false };
       write(K.settingsMeta, store.settingsMeta);

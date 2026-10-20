@@ -173,12 +173,19 @@ function pendingCount() {
   return store.sessions.filter((s) => !s.synced).length + store.pending.deletes.length + (store.settingsMeta.dirty ? 1 : 0);
 }
 
+function pendingText() {
+  const n = store.sessions.filter((s) => !s.synced).length + store.pending.deletes.length;
+  const parts = [];
+  if (n) parts.push(`${n} pass osynkade`);
+  if (store.settingsMeta.dirty) parts.push(n ? 'inställningar' : 'Inställningar osynkade');
+  return parts.join(' + ');
+}
+
 function syncPill() {
   if (!store.syncEnabled) return '<button class="pill" data-act="goto-settings">Bara lokalt – koppla Google-arket</button>';
   if (syncState.busy) return '<span class="pill">Synkar …</span>';
   if (syncState.error) return `<button class="pill warn" data-act="sync-now" title="${esc(syncState.error)}">⚠ Synkfel – försök igen</button>`;
-  const pending = pendingCount();
-  if (pending) return `<button class="pill" data-act="sync-now">${pending} osynkade – synka</button>`;
+  if (pendingCount()) return `<button class="pill" data-act="sync-now">${esc(pendingText())} – synka</button>`;
   return '<span class="pill ok">✓ Synkat med arket</span>';
 }
 
@@ -719,8 +726,12 @@ async function importFromSheet() {
 
 // ---------------------------------------------------------------- synk
 
+let syncAgain = false;
+
 async function runSync() {
-  if (!store.syncEnabled || syncState.busy) return;
+  if (!store.syncEnabled) return;
+  // Pågår redan en synk: kör en till direkt efteråt så att nya ändringar inte blir liggande.
+  if (syncState.busy) { syncAgain = true; return; }
   syncState = { busy: true, error: null };
   refreshSyncUi();
   try {
@@ -729,6 +740,11 @@ async function runSync() {
   } catch (err) {
     syncState = { busy: false, error: navigator.onLine ? err.message : 'Offline – synkar när du är online igen' };
   }
+  if (syncAgain && !syncState.error) {
+    syncAgain = false;
+    return runSync();
+  }
+  syncAgain = false;
   // Rita inte om medan man skriver i ett fält.
   if (!document.activeElement?.matches('input, textarea')) render();
   else refreshSyncUi();

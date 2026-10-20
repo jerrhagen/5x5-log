@@ -1,5 +1,5 @@
 // Offline-stöd: visar senast hämtade version direkt och uppdaterar i bakgrunden.
-const CACHE = '5x5-v2';
+const CACHE = '5x5-v3';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'js/app.js', 'js/logic.js', 'js/data.js', 'js/chart.js',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
