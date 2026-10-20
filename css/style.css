@@ -310,7 +310,19 @@ button { cursor: pointer; }
   min-height: 44px;
   width: 100%;
 }
-.workout-select { width: auto; max-width: 60vw; font-weight: 600; }
+.pass-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  margin: -4px -16px 12px;
+  padding: 2px 16px 4px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.pass-chips::-webkit-scrollbar { display: none; }
+.pass-chip { flex: none; font-weight: 600; font-size: 14px; padding: 6px 14px; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.pass-chip[aria-pressed='true'] { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+.next-tag { font-size: 11px; font-weight: 600; color: var(--good-ink); background: var(--good-wash); border-radius: 6px; padding: 1px 6px; }
 .new-ex { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; margin-top: 6px; }
 .new-ex input, .new-ex select {
   border: 1px solid var(--ring);
@@ -632,3 +644,4 @@ td { font-variant-numeric: tabular-nums; }
 @media (forced-colors: active) {
   .set.ok { forced-color-adjust: none; }
 }
+.pass-chip[aria-pressed='false'] { color: var(--ink); background: var(--surface); }

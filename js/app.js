@@ -146,18 +146,23 @@ function weightText(e) {
   return `${kg(e.weight)} kg`;
 }
 
-function workoutPicker(d) {
+// Passväljare: segmentknappar när allt får plats (t.ex. A/B/C), annars en svepbar rad med
+// chips under rubriken. Passet som står på tur i rotationen markeras "nästa".
+function workoutPicker(d, wide = false) {
   const programs = L.getPrograms(store.settings);
   const current = currentProgramId(d);
+  const next = L.nextWorkout(otherSessions(), store.settings);
   const opts = [...programs.map((p) => ({ id: p.id, name: p.name })), { id: L.FREE, name: 'Fritt' }];
-  if (opts.length <= 4 && opts.every((o) => o.name.length <= 8)) {
+  const compact = opts.length <= 4 && opts.every((o) => o.name.length <= 6);
+  if (compact !== !wide) return '';
+  if (compact) {
     return `<div class="seg" role="group" aria-label="Välj pass">
       ${opts.map((o) => `<button data-act="workout" data-w="${esc(o.id)}" aria-pressed="${current === o.id}">${esc(o.name)}</button>`).join('')}
     </div>`;
   }
-  return `<select class="workout-select" data-field="workout" aria-label="Välj pass">
-    ${opts.map((o) => `<option value="${esc(o.id)}" ${current === o.id ? 'selected' : ''}>${esc(o.id === L.FREE ? L.FREE_NAME : o.name)}</option>`).join('')}
-  </select>`;
+  return `<div class="pass-chips" role="group" aria-label="Välj pass">
+    ${opts.map((o) => `<button class="chip pass-chip" data-act="workout" data-w="${esc(o.id)}" aria-pressed="${current === o.id}">${esc(o.id === L.FREE ? L.FREE_NAME : o.name)}${o.id === next && current !== o.id ? '<span class="next-tag">nästa</span>' : ''}</button>`).join('')}
+  </div>`;
 }
 
 function exerciseCard(e, i, d) {
@@ -239,6 +244,7 @@ function renderLog() {
       </div>
       ${d.editing ? '' : workoutPicker(d)}
     </header>
+    ${d.editing ? '' : workoutPicker(d, true)}
     <div class="meta-row">
       <label class="date-field"><span class="sr">Datum</span><input type="date" data-field="date" value="${d.date}"></label>
       ${syncPill()}
@@ -263,6 +269,10 @@ function renderLog() {
       <button class="btn ghost" data-act="reset">${d.editing ? 'Avbryt' : 'Börja om'}</button>
     </div>
     <p class="tip">Tryck på en ring när setet är klart. Tryck igen för att minska antalet, eller håll inne för att skriva in exakt antal. Vilotimern startar automatiskt.</p>`;
+  // Visa valt pass i chipraden även när den är bredare än skärmen.
+  const row = $('.pass-chips', view);
+  const sel = row && $('[aria-pressed="true"]', row);
+  if (sel) row.scrollLeft = sel.offsetLeft - row.offsetLeft - 16;
 }
 
 function pendingCount() {
