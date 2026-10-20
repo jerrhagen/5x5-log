@@ -1,16 +1,22 @@
 # 5x5-logg
 
-En enkel träningslogg för StrongLifts-liknande 5x5 som fungerar på både dator och mobil. Den kan installeras som app på hemskärmen och fungerar offline.
+En enkel träningslogg som fungerar på både dator och mobil. Standardprogrammet är StrongLifts-liknande 5x5, men du kan bygga egna pass eller köra fritt. Appen kan installeras på hemskärmen och fungerar offline.
 
-- **Logga pass**: pass A (knäböj, bänkpress, stångrodd) och B (knäböj, axelpress, marklyft 1×5) växlar automatiskt.
-- **Föreslagna vikter**:
-  - Klarade du alla set förra gången föreslås +2,5 kg (marklyft +5 kg).
+- **Logga pass**: standard är pass A (knäböj, bänkpress, stångrodd) och B (knäböj, axelpress, marklyft 1×5), som växlar automatiskt.
+- **Egna program**: under Inställningar → *Program* skapar du egna pass, t.ex. "Ben" och "Överkropp", med set × reps eller intervall som 3 × 8–12. Passen föreslås i tur och ordning.
+- **Fritt pass**: välj *Fritt* i passvyn och plocka övningar ur banken medan du kör. I alla pass kan du lägga till eller ta bort övningar och set.
+- **Övningsbank**: ett 25-tal vanliga övningar finns från start (skivstång, hantlar, maskiner, kroppsvikt, tid). Nya skapar du direkt i passvyn eller under Inställningar. Varje övning har egen progression, ökning, startvikt, vilotid och mål.
+- **Föreslagna vikter**, beroende på övningens progression:
+  - *Linjär* (5x5): klarade du alla set förra gången föreslås +2,5 kg (marklyft +5 kg).
+  - *Dubbel*: med t.ex. 3 × 8–12 föreslås en rep till per set tills alla set når 12. Då ökar vikten och du börjar om på 8.
+  - *Manuell*: samma vikt, men appen påminner "dags att öka?" när vikten klarats tre gånger i rad eller alla set nått intervallets max.
+  - Kroppsviktsövningar ökar i reps och tidsövningar (planka) i sekunder.
   - Missade du reps föreslås samma vikt.
   - Efter 3 missade pass i rad på samma vikt föreslås deload −10 %.
   - Efter ett uppehåll sänks förslaget automatiskt: −10 % per 14 dagar utan träning (max −50 %).
   - Allt detta går att ändra under Inställningar.
 - **Lättare pass**: en knapp i passvyn som sänker alla vikter 10 % under senaste vikten, för en lugnare period. Progressionen bygger sedan upp igen därifrån, och passet märks med "Deload-pass" i kommentaren.
-- **Set-ringar**: tryck en gång för 5 reps, och tryck igen för att minska antalet (4, 3, … 0, tom).
+- **Set-ringar**: tryck en gång för målet (t.ex. 5 reps), och tryck igen för att minska antalet. Håll inne för att skriva in exakt antal, t.ex. fler reps än målet.
 - **Vilotimer**: startar automatiskt när ett set är klart. Den är 3 min efter ett klarat set och 5 min efter ett missat. Du får ljud och vibration när det är dags. Skärmen hålls tänd medan timern går.
 - **Kommentar och kroppsvikt** kan läggas till per pass.
 - **Progress**:
@@ -48,6 +54,17 @@ Bra att veta:
 - Importerad historik har bara vikter (arket har inga reps), så alla gamla pass räknas som klarade. Dina kommentarer följer med.
 - Har du ändrat i `Code.gs`, eller klistrat in en nyare version från repot, behöver du göra **Driftsätt → Hantera driftsättningar → Redigera (penna) → Version: Ny version → Driftsätt** för att ändringen ska gälla. Adressen är densamma som förut.
 
+## Flera personer (t.ex. en partner med eget program)
+
+Alla använder samma app på samma adress, men var och en har **ett eget Google-ark**. Data och program följer arket, så det behövs ingen ny app.
+
+1. Skapa ett nytt, tomt kalkylark i *hennes/hans* Google-konto, t.ex. "Träningslogg".
+2. Gör steg 1 ovan i det arket: klistra in `Code.gs`, välj en egen `TOKEN` och driftsätt som webbapp.
+3. Öppna appen på hennes/hans telefon (och dator) och fyll i **det arkets** adress och nyckel under Inställningar.
+4. Bygg programmet under Inställningar → *Program* (eller kör *Fritt pass*). Tryck "Återställ till 5x5" om man vill tillbaka till standard.
+
+Varje enhet är kopplad till ett ark åt gången. Delar ni en enhet behöver ni byta adress och nyckel, eller använda olika webbläsare.
+
 ## 2. Publicera webbplatsen
 
 Appen är helt statisk (HTML/CSS/JS, inga beroenden) och kan ligga var som helst.
@@ -75,7 +92,8 @@ npm test    # enhetstester för logiken (viktförslag, import m.m.)
 | `js/data.js` | Lokal lagring + synk mot Apps Script |
 | `js/chart.js` | Egen SVG-graf med tooltip |
 | `js/app.js` | Vyer: Pass, Historik, Progress, Inställningar |
+| `js/editor.js` | Editor för program och övningsbank |
 | `sw.js`, `manifest.webmanifest` | Offline och installation som app |
 | `apps-script/Code.gs` | Backend i ditt Google-ark |
 
-Programmet (övningar, set × reps) finns i `PROGRAM` och `EXERCISES` i `js/logic.js`.
+Standardprogrammet och standardbanken finns i `DEFAULT_PROGRAMS` och `DEFAULT_LIBRARY` i `js/logic.js`. Egna program sparas i inställningarna (fliken *Inställningar* i arket).

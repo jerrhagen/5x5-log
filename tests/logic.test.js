@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  suggest, manualDeload, mergeSettings, nextWorkout, cycleReps, platesPerSide, parseDelimited, importRows,
+  suggest, manualDeload, mergeSettings, getLibrary, getPrograms, makeEntry, FREE, nextWorkout, cycleReps, platesPerSide, parseDelimited, importRows,
   toCsv, mergeSessions, buildSession, normalizeDate, parseReps, DEFAULT_SETTINGS,
 } from '../js/logic.js';
 
@@ -138,9 +138,88 @@ test('inställningar från arket får rätt typ', () => {
   assert.equal(m.deloadPct, 15);
   assert.equal(m.bodyweight, 84.5);
   assert.equal(m.sound, false);
-  assert.equal(m.exercises.squat.inc, 5);
-  assert.equal(m.exercises.bench.inc, 2.5);
+  // äldre inställningar (före övningsbanken) läses in i banken
+  assert.equal(getLibrary(m).find((e) => e.key === 'squat').inc, 5);
+  assert.equal(getLibrary(m).find((e) => e.key === 'bench').inc, 2.5);
   assert.equal(m.goalFactors.squat, 1.75);
   assert.deepEqual(m.plates, [20, 10]);
   assert.equal(m.restSuccess, 180);
+});
+
+// ---------- Program, övningsbank och progressionstyper ----------
+
+const D = '2026-01-07';
+const custom = {
+  ...DEFAULT_SETTINGS,
+  library: [
+    { key: 'hip', name: 'Hip thrust', type: 'barbell', sets: 3, repsMin: 8, repsMax: 12, progression: 'double', inc: 5, start: 40 },
+    { key: 'curl', name: 'Bicepscurl', type: 'dumbbell', sets: 3, repsMin: 10, repsMax: 10, progression: 'manual', inc: 1, start: 6 },
+    { key: 'push', name: 'Armhävningar', type: 'bodyweight', sets: 3, repsMin: 8, repsMax: 15, progression: 'double', inc: 0, start: 0 },
+    { key: 'plank', name: 'Planka', type: 'time', sets: 3, repsMin: 30, repsMax: 60, progression: 'double', inc: 0, start: 0 },
+  ],
+  programs: [
+    { id: 'ben', name: 'Ben', items: [{ key: 'hip', sets: 3, repsMin: 8, repsMax: 12 }, { key: 'plank' }] },
+    { id: 'ok', name: 'Överkropp', items: [{ key: 'curl' }, { key: 'push' }] },
+  ],
+};
+
+test('dubbel progression: sikta på fler reps, sedan öka vikten', () => {
+  let r = suggest([sess('2026-01-01', 'Ben', [['hip', 60, [10, 9, 9]]])], 'hip', custom, D);
+  assert.equal(r.weight, 60);
+  assert.equal(r.reps, 10);
+  assert.equal(r.kind, 'same');
+  r = suggest([sess('2026-01-01', 'Ben', [['hip', 60, [12, 12, 12]]])], 'hip', custom, D);
+  assert.equal(r.weight, 65);
+  assert.equal(r.reps, 8);
+  assert.equal(r.kind, 'up');
+});
+
+test('dubbel progression: tre pass under min → deload', () => {
+  const low = [7, 6, 6];
+  const s = ['2026-01-01', '2026-01-03', '2026-01-05'].map((d) => sess(d, 'Ben', [['hip', 80, low]]));
+  const r = suggest(s, 'hip', custom, D);
+  assert.equal(r.kind, 'deload');
+  assert.equal(r.weight, 72.5);
+});
+
+test('manuell: påminnelse efter tre klarade pass på samma vikt', () => {
+  const ok10 = [10, 10, 10];
+  const two = ['2026-01-01', '2026-01-03'].map((d) => sess(d, 'Ö', [['curl', 8, ok10]]));
+  assert.equal(suggest(two, 'curl', custom, D).kind, 'same');
+  const three = [...two, sess('2026-01-05', 'Ö', [['curl', 8, ok10]])];
+  const r = suggest(three, 'curl', custom, D);
+  assert.equal(r.kind, 'nudge');
+  assert.equal(r.weight, 8);
+  assert.equal(r.alt, 9);
+});
+
+test('kroppsvikt och tid: reps/sekunder ökar, vikten rörs inte', () => {
+  let r = suggest([sess('2026-01-01', 'Ö', [['push', 0, [12, 10, 9]]])], 'push', custom, D);
+  assert.deepEqual([r.weight, r.reps], [0, 10]);
+  r = suggest([sess('2026-01-01', 'Ö', [['push', 0, [15, 15, 15]]])], 'push', custom, D);
+  assert.equal(r.kind, 'top');
+  assert.equal(r.weight, 0);
+  r = suggest([sess('2026-01-01', 'Ben', [['plank', 0, [40, 35, 30]]])], 'plank', custom, D);
+  assert.equal(r.reps, 35);
+  // inget uppehålls-deload för övningar utan vikt
+  r = suggest([sess('2026-01-01', 'Ben', [['plank', 0, [40, 35, 30]]])], 'plank', custom, '2026-03-01');
+  assert.notEqual(r.kind, 'deload');
+});
+
+test('egna pass roteras och fritt pass startar tomt', () => {
+  assert.equal(nextWorkout([], custom), 'ben');
+  assert.equal(nextWorkout([sess('2026-01-01', 'Ben', [])], custom), 'ok');
+  assert.equal(nextWorkout([sess('2026-01-01', 'Ben', []), sess('2026-01-02', 'Fritt pass', [])], custom), 'ok');
+  const ben = buildSession([], 'ben', custom, D);
+  assert.equal(ben.workout, 'Ben');
+  assert.deepEqual(ben.exercises.map((e) => [e.key, e.sets.length, e.targetReps]), [['hip', 3, 8], ['plank', 3, 30]]);
+  const free = buildSession([], FREE, custom, D);
+  assert.equal(free.workout, 'Fritt pass');
+  assert.equal(free.exercises.length, 0);
+  assert.equal(makeEntry([], 'curl', custom, D).weight, 6);
+});
+
+test('5x5 är standardprogrammet', () => {
+  assert.deepEqual(getPrograms(DEFAULT_SETTINGS).map((p) => p.name), ['A', 'B']);
+  assert.equal(getLibrary(DEFAULT_SETTINGS).find((e) => e.key === 'deadlift').sets, 1);
 });

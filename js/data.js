@@ -1,5 +1,5 @@
 // Lokal lagring (localStorage) + synk mot Google Apps Script.
-import { DEFAULT_SETTINGS, mergeSettings } from './logic.js';
+import { DEFAULT_SETTINGS, mergeSettings, getLibrary, exerciseKey } from './logic.js';
 
 const K = {
   sessions: '5x5.sessions',
@@ -55,7 +55,12 @@ export const store = {
   syncedSettings() {
     const out = structuredClone(this.settings);
     for (const k of LOCAL_ONLY) delete out[k];
-    out.ui = { range: this.ui.range || '1y', hiddenLifts: this.ui.hiddenLifts || [] };
+    out.ui = {
+      range: this.ui.range || '1y',
+      hiddenLifts: this.ui.hiddenLifts || [],
+      shownLifts: this.ui.shownLifts ?? null,
+      repsLift: this.ui.repsLift ?? null,
+    };
     return out;
   },
 
@@ -66,6 +71,8 @@ export const store = {
     if (ui && typeof ui === 'object') {
       if (typeof ui.range === 'string') this.ui.range = ui.range;
       if (Array.isArray(ui.hiddenLifts)) this.ui.hiddenLifts = ui.hiddenLifts;
+      if (Array.isArray(ui.shownLifts) || ui.shownLifts === null) this.ui.shownLifts = ui.shownLifts;
+      if (typeof ui.repsLift === 'string' || ui.repsLift === null) this.ui.repsLift = ui.repsLift;
       this.saveUi();
     }
     this.saveSettings();
@@ -156,10 +163,25 @@ async function call(payload) {
   return data;
 }
 
-const strip = ({ synced, suggestion, ...s }) => ({
+const strip = ({ synced, suggestion, programId, ...s }) => ({
   ...s,
-  exercises: s.exercises.map(({ suggestion: _s, ...e }) => e),
+  exercises: s.exercises.map(({ suggestion: _s, item, ...e }) => e),
 });
+
+// Pass från arket: koppla övningen till rätt nyckel i banken (äldre Code.gs sparade ingen nyckel).
+function fromSheet(r) {
+  const lib = getLibrary(store.settings);
+  const keys = new Set(lib.map((e) => e.key));
+  return {
+    ...r,
+    synced: true,
+    exercises: (r.exercises || []).map((e) => {
+      if (keys.has(e.key)) return e;
+      const byName = lib.find((x) => x.name.toLowerCase() === String(e.name).toLowerCase());
+      return { ...e, key: byName ? byName.key : exerciseKey(e.name) };
+    }),
+  };
+}
 
 let running = null;
 
@@ -180,6 +202,8 @@ async function doSync() {
   }
 
   const listed = await call({ action: 'list' });
+  // 1 = bara pass, 2 = + inställningar, 3 = + mål-reps och övningsnyckel per rad
+  store.backendVersion = listed.version || ('settings' in listed ? 2 : 1);
   const remote = listed.sessions || [];
   await syncSettings(listed);
 
@@ -197,7 +221,7 @@ async function doSync() {
         toPush.push(local);
         next.push(local);
       } else {
-        next.push({ ...r, synced: true });
+        next.push(fromSheet(r));
       }
     } else if (local.synced) {
       // Fanns i arket förut men är borttagen där → ta bort lokalt.
@@ -206,7 +230,7 @@ async function doSync() {
       next.push(local);
     }
   }
-  for (const r of remoteById.values()) next.push({ ...r, synced: true });
+  for (const r of remoteById.values()) next.push(fromSheet(r));
 
   const imported = toPush.filter((s) => s.id.startsWith('imp-'));
   const logged = toPush.filter((s) => !s.id.startsWith('imp-'));

@@ -1,14 +1,35 @@
 import * as L from './logic.js';
 import { store, sync, ping, fetchTabs } from './data.js';
 import { lineChart } from './chart.js';
+import { editorHtml, editorAction, editorChange, exerciseOptions, addExercise } from './editor.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const kg = L.fmtKg;
 
-// Färg följer övningen (validerad kategorisk palett, se css/style.css).
-const COLOR = { squat: 'var(--s1)', bench: 'var(--s2)', row: 'var(--s3)', ohp: 'var(--s4)', deadlift: 'var(--s5)' };
-const colorOf = (key) => COLOR[key] || 'var(--ink-3)';
+// Färg följer övningen: de åtta första övningarna man loggat (i den ordning de först
+// användes) får var sin fast färg ur den validerade paletten. En övning byter aldrig färg
+// när nya tillkommer; fler än åtta blir neutrala hellre än att färgerna upprepas.
+let libIndex = new Map();
+let colorIndex = new Map();
+function refreshLib() {
+  const lib = L.getLibrary(store.settings);
+  libIndex = new Map(lib.map((e, i) => [e.key, i]));
+  const order = [];
+  const seen = new Set();
+  const byDate = [...store.sessions].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  for (const s of byDate) {
+    for (const e of s.exercises) if (!seen.has(e.key)) { seen.add(e.key); order.push(e.key); }
+  }
+  for (const e of lib) if (!seen.has(e.key)) { seen.add(e.key); order.push(e.key); }
+  colorIndex = new Map(order.map((k, i) => [k, i]));
+}
+const colorOf = (key) => {
+  const i = colorIndex.get(key);
+  return i != null && i < 8 ? `var(--s${i + 1})` : 'var(--ink-3)';
+};
+const cfgOf = (e) => L.exConfig(store.settings, e.key, e.item, e.name);
+const passLabel = (name) => (!name ? 'Pass –' : name.length <= 2 ? `Pass ${name}` : name);
 
 const fmtDate = (iso, opts = { weekday: 'short', day: 'numeric', month: 'short' }) =>
   new Date(`${iso}T12:00:00`).toLocaleDateString('sv-SE', opts);
@@ -17,16 +38,27 @@ let tab = ['log', 'history', 'progress', 'settings'].includes(store.ui.tab) ? st
 let draft = store.getDraft();
 let historyLimit = 30;
 let syncState = { busy: false, error: null };
+let pickerOpen = false;
 
 // ---------------------------------------------------------------- utkast
 
-function freshDraft(workout) {
-  return { ...L.buildSession(store.sessions, workout || L.nextWorkout(store.sessions), store.settings), touched: false };
+function freshDraft(workoutId) {
+  const id = workoutId || L.nextWorkout(store.sessions, store.settings);
+  return { ...L.buildSession(store.sessions, id, store.settings), touched: false };
 }
 
 function ensureDraft() {
   // Ett orört utkast byggs om så att förslagen alltid utgår från senaste data och dagens datum.
-  if (!draft || (!draft.touched && !draft.editing)) draft = freshDraft(draft?.touched ? draft.workout : undefined);
+  if (!draft || (!draft.touched && !draft.editing)) {
+    draft = freshDraft();
+    pickerOpen = draft.exercises.length === 0;
+  }
+}
+
+function currentProgramId(d) {
+  if (d.programId) return d.programId;
+  if (d.workout === L.FREE_NAME) return L.FREE;
+  return L.getPrograms(store.settings).find((p) => p.name === d.workout)?.id || '';
 }
 
 function touch() {
@@ -94,66 +126,130 @@ function installCard() {
 
 // ---------------------------------------------------------------- vy: pass
 
+function schemeText(cfg, n) {
+  const u = L.unitOf(cfg);
+  return `${n} × ${cfg.repsMin === cfg.repsMax ? kg(cfg.repsMax) : `${kg(cfg.repsMin)}–${kg(cfg.repsMax)}`}${u}`;
+}
+
+// "5×5" när alla set är lika, annars de faktiska repsen, t.ex. "10/9/8".
 function setsLabel(e) {
-  if (L.isSuccess(e)) return `${e.sets.length}×${e.targetReps}`;
-  return e.sets.map((r) => (r == null ? '–' : r)).join('/');
+  const u = L.unitOf(cfgOf(e));
+  const first = e.sets[0];
+  if (first != null && e.sets.every((r) => r === first)) return `${e.sets.length}×${first}${u}`;
+  return e.sets.map((r) => (r == null ? '–' : `${r}${u}`)).join('/');
+}
+
+function weightText(e) {
+  const cfg = cfgOf(e);
+  if (cfg.type === 'bodyweight') return e.weight > 0 ? `+${kg(e.weight)} kg` : 'Kroppsvikt';
+  if (cfg.type === 'time') return e.weight > 0 ? `+${kg(e.weight)} kg` : '';
+  return `${kg(e.weight)} kg`;
+}
+
+function workoutPicker(d) {
+  const programs = L.getPrograms(store.settings);
+  const current = currentProgramId(d);
+  const opts = [...programs.map((p) => ({ id: p.id, name: p.name })), { id: L.FREE, name: 'Fritt' }];
+  if (opts.length <= 4 && opts.every((o) => o.name.length <= 8)) {
+    return `<div class="seg" role="group" aria-label="Välj pass">
+      ${opts.map((o) => `<button data-act="workout" data-w="${esc(o.id)}" aria-pressed="${current === o.id}">${esc(o.name)}</button>`).join('')}
+    </div>`;
+  }
+  return `<select class="workout-select" data-field="workout" aria-label="Välj pass">
+    ${opts.map((o) => `<option value="${esc(o.id)}" ${current === o.id ? 'selected' : ''}>${esc(o.id === L.FREE ? L.FREE_NAME : o.name)}</option>`).join('')}
+  </select>`;
+}
+
+function exerciseCard(e, i, d) {
+  const cfg = cfgOf(e);
+  const unit = L.unitOf(cfg);
+  const sug = L.suggest(otherSessions(), e.key, store.settings, d.date, e.item);
+  const last = lastFor(e.key, d.date);
+  const showWeight = cfg.type !== 'time';
+  const icon = { up: '↑', same: '→', deload: '↓', start: '•', top: '★', nudge: '↑' }[sug.kind] || '•';
+  const links = [];
+  if (showWeight && e.weight !== sug.weight) links.push(`<button class="link" data-act="use-sug" data-i="${i}">Använd ${kg(sug.weight)} kg</button>`);
+  if (sug.alt != null && e.weight !== sug.alt) links.push(`<button class="link" data-act="use-alt" data-i="${i}">Öka till ${kg(sug.alt)} kg</button>`);
+  const hint = d.deload && e.weight > 0 && L.isWeighted(cfg)
+    ? `<p class="hint deload">↓ Lättare pass – ${store.settings.deloadPct} % under senaste vikten</p>`
+    : `<p class="hint ${sug.kind}">${icon} ${esc(sug.reason)} ${links.join(' ')}</p>`;
+  const subs = [];
+  subs.push(last ? `Förra: ${[weightText(last.e), setsLabel(last.e)].filter(Boolean).join(' · ')} · ${fmtDate(last.s.date, { day: 'numeric', month: 'short' })}` : 'Inga tidigare pass');
+  if (cfg.type === 'barbell') {
+    const plates = L.platesPerSide(e.weight, store.settings.barWeight, store.settings.plates);
+    subs.push(`Per sida: ${plates == null ? 'går inte jämnt med dina skivor' : plates.length ? plates.map(kg).join(' + ') : 'bara stången'}`);
+  }
+  const sets = e.sets.map((r, j) => {
+    const state = r == null ? 'todo' : r >= e.targetReps ? 'ok' : 'miss';
+    const label = r == null ? `Set ${j + 1}: ej gjort` : `Set ${j + 1}: ${r} ${unit || 'reps'}`;
+    return `<button class="set ${state}" data-act="set" data-i="${i}" data-j="${j}" aria-label="${label}">${r ?? `<small>${e.targetReps}</small>`}</button>`;
+  }).join('');
+  const stepper = showWeight ? `<div class="stepper">
+      <button class="step" data-act="w-" data-i="${i}" aria-label="Minska vikt">−</button>
+      <label class="w"><input data-field="weight" data-i="${i}" inputmode="decimal" enterkeyhint="done" value="${kg(e.weight)}" aria-label="${cfg.type === 'bodyweight' ? 'Extra vikt' : 'Vikt'} ${esc(e.name)} i kg"><span>${cfg.type === 'bodyweight' ? '+kg' : 'kg'}</span></label>
+      <button class="step" data-act="w+" data-i="${i}" aria-label="Öka vikt">+</button>
+    </div>` : '';
+  return `
+    <article class="card ex" style="--c:${colorOf(e.key)}">
+      <div class="ex-head">
+        <h2><span class="swatch"></span><span><span class="nm">${esc(e.name)}</span><span class="scheme">${schemeText(cfg, e.sets.length)} · mål ${e.targetReps}${unit || ' reps'}</span></span></h2>
+        ${stepper}
+      </div>
+      ${hint}
+      <p class="sub">${subs.join(' · ')}</p>
+      <div class="sets" role="group" aria-label="Set för ${esc(e.name)}">${sets}</div>
+      <div class="ex-foot">
+        <button class="link" data-act="set-add" data-i="${i}">+ Set</button>
+        ${e.sets.length > 1 ? `<button class="link" data-act="set-del" data-i="${i}">− Set</button>` : ''}
+        <button class="link muted" data-act="ex-remove" data-i="${i}">Ta bort övningen</button>
+      </div>
+    </article>`;
+}
+
+function pickerCard() {
+  if (!pickerOpen) return '<button class="btn ghost add-ex" data-act="picker-open">+ Lägg till övning</button>';
+  const exclude = draft.exercises.map((e) => e.key);
+  return `<section class="card picker">
+    <h2>Lägg till övning</h2>
+    <label class="field"><span>Ur övningsbanken</span>
+      <select data-field="pick-ex">${exerciseOptions(store.settings, { placeholder: 'Välj övning …', exclude })}</select></label>
+    <p class="sub">Finns den inte? Skapa en ny (sparas i banken):</p>
+    <div class="new-ex">
+      <input id="new-ex-name" placeholder="t.ex. Kabelrodd" aria-label="Namn på ny övning">
+      <select id="new-ex-type" aria-label="Typ">${Object.entries(L.TYPES).map(([t, l]) => `<option value="${t}" ${t === 'dumbbell' ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button class="btn small" data-act="ex-create">Skapa</button>
+    </div>
+    ${draft.exercises.length ? '<button class="link" data-act="picker-close">Stäng</button>' : ''}
+  </section>`;
 }
 
 function renderLog() {
   ensureDraft();
   const d = draft;
   const view = $('#view-log');
-  const cards = d.exercises.map((e, i) => {
-    const sug = L.suggest(otherSessions(), e.key, store.settings, d.date);
-    const last = lastFor(e.key, d.date);
-    const plates = L.platesPerSide(e.weight, store.settings.barWeight, store.settings.plates);
-    const plateText = plates == null ? 'går inte jämnt med dina skivor'
-      : plates.length ? plates.map(kg).join(' + ') : 'bara stången';
-    const icon = { up: '↑', same: '→', deload: '↓', start: '•' }[sug.kind];
-    const differs = e.weight !== sug.weight;
-    const sets = e.sets.map((r, j) => {
-      const state = r == null ? 'todo' : r >= e.targetReps ? 'ok' : 'miss';
-      const label = r == null ? `Set ${j + 1}: ej gjort` : `Set ${j + 1}: ${r} reps`;
-      return `<button class="set ${state}" data-act="set" data-i="${i}" data-j="${j}" aria-label="${label}">${r ?? `<small>${e.targetReps}</small>`}</button>`;
-    }).join('');
-    return `
-      <article class="card ex" style="--c:${colorOf(e.key)}">
-        <div class="ex-head">
-          <h2><span class="swatch"></span>${esc(e.name)} <span class="scheme">${e.sets.length}×${e.targetReps}</span></h2>
-          <div class="stepper">
-            <button class="step" data-act="w-" data-i="${i}" aria-label="Minska vikt">−</button>
-            <label class="w"><input data-field="weight" data-i="${i}" inputmode="decimal" enterkeyhint="done" value="${kg(e.weight)}" aria-label="Vikt ${esc(e.name)} i kg"><span>kg</span></label>
-            <button class="step" data-act="w+" data-i="${i}" aria-label="Öka vikt">+</button>
-          </div>
-        </div>
-        ${d.deload
-    ? `<p class="hint deload">↓ Lättare pass – ${store.settings.deloadPct} % under senaste vikten</p>`
-    : `<p class="hint ${sug.kind}">${icon} ${esc(sug.reason)}${differs ? ` <button class="link" data-act="use-sug" data-i="${i}">Använd ${kg(sug.weight)} kg</button>` : ''}</p>`}
-        <p class="sub">${last ? `Förra: ${kg(last.e.weight)} kg · ${setsLabel(last.e)} · ${fmtDate(last.s.date, { day: 'numeric', month: 'short' })}` : 'Inga tidigare pass'} · Per sida: ${plateText}</p>
-        <div class="sets" role="group" aria-label="Set för ${esc(e.name)}">${sets}</div>
-      </article>`;
-  }).join('');
+  const isFree = currentProgramId(d) === L.FREE;
+  const title = d.editing ? passLabel(d.workout) : isFree ? L.FREE_NAME : passLabel(d.workout);
+  const anyWeighted = d.exercises.some((e) => L.isWeighted(cfgOf(e)));
 
   view.innerHTML = `
     <header class="page-head">
       <div>
         <p class="eyebrow">${d.editing ? 'Redigerar pass' : 'Dagens pass'}</p>
-        <h1>Pass ${esc(d.workout || '–')}</h1>
+        <h1>${esc(title)}</h1>
       </div>
-      <div class="seg" role="group" aria-label="Välj pass">
-        ${['A', 'B'].map((w) => `<button data-act="workout" data-w="${w}" aria-pressed="${d.workout === w}">${w}</button>`).join('')}
-      </div>
+      ${d.editing ? '' : workoutPicker(d)}
     </header>
     <div class="meta-row">
       <label class="date-field"><span class="sr">Datum</span><input type="date" data-field="date" value="${d.date}"></label>
       ${syncPill()}
     </div>
     ${installBanner()}
-    <button class="deload-toggle" data-act="deload" aria-pressed="${Boolean(d.deload)}">
-      <span class="dt-text"><b>Lättare pass</b><small>Deload −${kg(store.settings.deloadPct)} % på alla övningar – för en lugnare period</small></span>
+    ${anyWeighted ? `<button class="deload-toggle" data-act="deload" aria-pressed="${Boolean(d.deload)}">
+      <span class="dt-text"><b>Lättare pass</b><small>Deload −${kg(store.settings.deloadPct)} % på övningar med vikt – för en lugnare period</small></span>
       <span class="switch" aria-hidden="true"></span>
-    </button>
-    ${cards}
+    </button>` : ''}
+    ${d.exercises.map((e, i) => exerciseCard(e, i, d)).join('')}
+    ${pickerCard()}
     <section class="card">
       <label class="field"><span>Kommentar</span>
         <textarea data-field="comment" rows="2" placeholder="Hur kändes det? Form, sömn, ont någonstans …">${esc(d.comment)}</textarea>
@@ -166,7 +262,7 @@ function renderLog() {
       <button class="btn primary" data-act="save">${d.editing ? 'Spara ändringar' : 'Spara pass'}</button>
       <button class="btn ghost" data-act="reset">${d.editing ? 'Avbryt' : 'Börja om'}</button>
     </div>
-    <p class="tip">Tryck på en ring när setet är klart (5 reps). Tryck igen för att minska antalet reps. Vilotimern startar automatiskt.</p>`;
+    <p class="tip">Tryck på en ring när setet är klart. Tryck igen för att minska antalet, eller håll inne för att skriva in exakt antal. Vilotimern startar automatiskt.</p>`;
 }
 
 function pendingCount() {
@@ -191,28 +287,77 @@ function syncPill() {
 
 function changeWeight(i, dir) {
   const e = draft.exercises[i];
-  const inc = store.settings.exercises[e.key]?.inc ?? 2.5;
+  const cfg = cfgOf(e);
+  const inc = cfg.inc > 0 ? cfg.inc : cfg.type === 'barbell' ? 2.5 : 1;
   e.weight = Math.max(0, Math.round((e.weight + dir * inc) * 100) / 100);
   touch();
   renderLog();
 }
 
-function tapSet(i, j) {
+function setReps(i, j, next) {
   const e = draft.exercises[i];
   const prev = e.sets[j];
-  const next = L.cycleReps(prev, e.targetReps);
   e.sets[j] = next;
   touch();
   renderLog();
   if (navigator.vibrate && store.settings.vibrate) navigator.vibrate(15);
   if (next == null) return;
+  const rest = cfgOf(e).rest;
   const allDone = draft.exercises.every((x) => x.sets.every((r) => r != null));
   if (prev == null) {
     if (allDone) stopTimer();
-    else startTimer(next >= e.targetReps);
+    else startTimer(next >= e.targetReps, rest);
   } else {
-    adjustTimer(next >= e.targetReps);
+    adjustTimer(next >= e.targetReps, rest);
   }
+}
+
+function tapSet(i, j) {
+  const e = draft.exercises[i];
+  setReps(i, j, L.cycleReps(e.sets[j], e.targetReps));
+}
+
+// Håll inne en ring för att skriva in exakt antal (t.ex. fler reps än målet).
+function promptSet(i, j) {
+  const e = draft.exercises[i];
+  const unit = L.unitOf(cfgOf(e)) ? 'sekunder' : 'reps';
+  const v = prompt(`${e.name} – set ${j + 1}: antal ${unit}`, e.sets[j] ?? e.targetReps);
+  if (v == null) return;
+  if (v.trim() === '') return setReps(i, j, null);
+  const n = L.parseNum(v);
+  if (n == null || n < 0) return toast('Ange ett tal.');
+  setReps(i, j, Math.round(n));
+}
+
+function addToDraft(key) {
+  if (draft.exercises.some((e) => e.key === key)) return toast('Övningen finns redan i passet.');
+  draft.exercises.push(L.makeEntry(otherSessions(), key, store.settings, draft.date));
+  pickerOpen = false;
+  touch();
+  renderLog();
+  const cards = document.querySelectorAll('#view-log .card.ex');
+  cards[cards.length - 1]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function removeFromDraft(i) {
+  const e = draft.exercises[i];
+  if (e.sets.some((r) => r != null) && !confirm(`Ta bort ${e.name} ur passet? Loggade set försvinner.`)) return;
+  draft.exercises.splice(i, 1);
+  if (!draft.exercises.length) pickerOpen = true;
+  touch();
+  renderLog();
+}
+
+function switchWorkout(id) {
+  if (id === currentProgramId(draft)) return;
+  const logged = draft.exercises.some((e) => e.sets.some((r) => r != null));
+  const name = id === L.FREE ? L.FREE_NAME : L.getPrograms(store.settings).find((p) => p.id === id)?.name;
+  if (logged && !confirm(`Byta till ${passLabel(name)}? Loggade set i det här passet försvinner.`)) return renderLog();
+  const keep = { id: draft.id, date: draft.date, comment: draft.comment, bodyweight: draft.bodyweight, editing: draft.editing };
+  draft = { ...L.buildSession(otherSessions(), id, store.settings, draft.date), ...keep, touched: true };
+  pickerOpen = draft.exercises.length === 0;
+  store.setDraft(draft);
+  renderLog();
 }
 
 function withDeloadNote(comment, deload) {
@@ -223,9 +368,10 @@ function withDeloadNote(comment, deload) {
 function toggleDeload() {
   draft.deload = !draft.deload;
   for (const e of draft.exercises) {
+    if (!L.isWeighted(cfgOf(e))) continue;
     e.weight = draft.deload
-      ? L.manualDeload(otherSessions(), e.key, store.settings, draft.date)
-      : L.suggest(otherSessions(), e.key, store.settings, draft.date).weight;
+      ? L.manualDeload(otherSessions(), e.key, store.settings, draft.date, e.item)
+      : L.suggest(otherSessions(), e.key, store.settings, draft.date, e.item).weight;
   }
   touch();
   renderLog();
@@ -234,9 +380,9 @@ function toggleDeload() {
 
 // Nytt datum ger nya förslag (t.ex. deload efter uppehåll). Vikter man själv ändrat lämnas orörda.
 function changeDate(date) {
-  const target = (e, d) => (draft.deload
-    ? L.manualDeload(otherSessions(), e.key, store.settings, d)
-    : L.suggest(otherSessions(), e.key, store.settings, d).weight);
+  const target = (e, d) => (draft.deload && L.isWeighted(cfgOf(e))
+    ? L.manualDeload(otherSessions(), e.key, store.settings, d, e.item)
+    : L.suggest(otherSessions(), e.key, store.settings, d, e.item).weight);
   const untouched = draft.exercises.map((e) => e.weight === target(e, draft.date));
   draft.date = date;
   draft.exercises.forEach((e, i) => { if (untouched[i]) e.weight = target(e, date); });
@@ -245,7 +391,7 @@ function changeDate(date) {
 function saveSession() {
   const exercises = draft.exercises
     .filter((e) => e.sets.some((r) => r != null))
-    .map(({ suggestion, ...e }) => ({ ...e, sets: [...e.sets] }));
+    .map(({ suggestion, item, ...e }) => ({ ...e, sets: [...e.sets] }));
   if (!exercises.length) return toast('Logga minst ett set först.');
   const empty = exercises.some((e) => e.sets.some((r) => r == null));
   if (empty && !confirm('Några set är inte ifyllda. Spara ändå? Tomma set räknas som missade.')) return;
@@ -308,17 +454,18 @@ async function holdWakeLock() {
   } catch { /* stöds inte */ }
 }
 
-function startTimer(success) {
-  const target = success ? store.settings.restSuccess : store.settings.restFail;
+// rest = övningens egen vilotid (sek), annars standard för klarat/missat set.
+function startTimer(success, rest = null) {
+  const target = rest > 0 ? rest : success ? store.settings.restSuccess : store.settings.restFail;
   store.setTimer({ start: Date.now(), target, success, alerted: false });
   runTimer();
   holdWakeLock();
 }
 
-function adjustTimer(success) {
+function adjustTimer(success, rest = null) {
   const t = store.getTimer();
   if (!t) return;
-  t.target = success ? store.settings.restSuccess : store.settings.restFail;
+  t.target = rest > 0 ? rest : success ? store.settings.restSuccess : store.settings.restFail;
   t.success = success;
   t.alerted = (Date.now() - t.start) / 1000 >= t.target;
   store.setTimer(t);
@@ -381,12 +528,12 @@ function renderHistory() {
     const exs = s.exercises.map((e) => {
       const ok = L.isSuccess(e);
       return `<li style="--c:${colorOf(e.key)}"><span class="swatch"></span><span class="n">${esc(e.name)}</span>
-        <b>${kg(e.weight)} kg</b><span class="reps ${ok ? 'ok' : 'miss'}">${ok ? '✓' : '✗'} ${setsLabel(e)}</span></li>`;
+        <b>${weightText(e)}</b><span class="reps ${ok ? 'ok' : 'miss'}">${ok ? '✓' : '✗'} ${setsLabel(e)}</span></li>`;
     }).join('');
     return `${head}
       <article class="card hist">
         <header>
-          <div><b>${fmtDate(s.date)}</b> <span class="tag">Pass ${esc(s.workout || '–')}</span>${s.synced === false && store.syncEnabled ? ' <span class="tag muted">ej synkad</span>' : ''}</div>
+          <div><b>${fmtDate(s.date)}</b> <span class="tag">${esc(passLabel(s.workout))}</span>${s.synced === false && store.syncEnabled ? ' <span class="tag muted">ej synkad</span>' : ''}</div>
           <div class="row-actions">
             <button class="link" data-act="edit" data-id="${esc(s.id)}">Redigera</button>
             <button class="link danger" data-act="delete" data-id="${esc(s.id)}">Ta bort</button>
@@ -415,7 +562,7 @@ function editSession(id) {
 function deleteSession(id) {
   const s = store.sessions.find((x) => x.id === id);
   if (!s) return;
-  if (!confirm(`Ta bort passet ${fmtDate(s.date)} (pass ${s.workout})?`)) return;
+  if (!confirm(`Ta bort passet ${fmtDate(s.date)} (${passLabel(s.workout)})?`)) return;
   store.remove(id);
   if (draft?.id === id) { draft = null; store.setDraft(null); }
   renderHistory();
@@ -445,40 +592,50 @@ function currentBodyweight() {
   return withBw?.bodyweight ?? store.settings.bodyweight;
 }
 
+// Vilka övningar som visas i viktgrafen: eget val, annars de fem första i banken (max 8 åt gången).
+function shownLiftKeys(weightSeries) {
+  if (Array.isArray(store.ui.shownLifts)) return new Set(store.ui.shownLifts);
+  const hidden = new Set(store.ui.hiddenLifts || []);
+  return new Set(weightSeries.filter((x) => !hidden.has(x.key)).slice(0, 5).map((x) => x.key));
+}
+
+function progressSeries(sessions) {
+  const order = (k) => (libIndex.has(k) ? libIndex.get(k) : 999);
+  const all = L.seriesByExercise(sessions).sort((a, b) => order(a.key) - order(b.key));
+  const weighted = (x) => L.isWeighted(L.exConfig(store.settings, x.key, null, x.name));
+  return { weightSeries: all.filter(weighted), repsSeries: all.filter((x) => !weighted(x)) };
+}
+
 function renderProgress() {
   const view = $('#view-progress');
   const range = store.ui.range || '1y';
-  const hidden = new Set(store.ui.hiddenLifts || []);
   const from = rangeStart(range);
   const inRange = store.sessions.filter((s) => s.date >= from);
-  const series = L.seriesByExercise(inRange)
-    .filter((s) => L.EXERCISES[s.key])
-    .sort((a, b) => L.EXERCISE_ORDER.indexOf(a.key) - L.EXERCISE_ORDER.indexOf(b.key));
+  const { weightSeries: series, repsSeries } = progressSeries(inRange);
+  const shown = shownLiftKeys(series);
 
   const legend = series.map((s) => `
-    <button class="chip" data-act="toggle-lift" data-key="${s.key}" aria-pressed="${!hidden.has(s.key)}" style="--c:${colorOf(s.key)}">
+    <button class="chip" data-act="toggle-lift" data-key="${esc(s.key)}" aria-pressed="${shown.has(s.key)}" style="--c:${colorOf(s.key)}">
       <span class="swatch"></span>${esc(s.name)}</button>`).join('');
 
-  // Mål (kroppsvikt × faktor) – som i målsektionen i arket
+  // Mål (kroppsvikt × faktor). Bästa i vald period + (om inte "Allt") bästa totalt, skuggat bakom.
   const bw = currentBodyweight();
-  // Bästa i vald period + (om inte "Allt") bästa totalt, skuggat bakom.
   const showTotal = range !== 'all';
   const total = liftStats(store.sessions);
   const period = showTotal ? liftStats(inRange) : total;
   const pctOf = (w, goal) => Math.min(100, Math.round((w / goal) * 100));
   const rm = (x) => (x?.e1rm ? ` · 1RM ≈ ${Math.round(x.e1rm)} kg` : '');
-  const goals = L.EXERCISE_ORDER.map((key) => {
+  const goals = L.getLibrary(store.settings).map(({ key, name }) => {
     const factor = store.settings.goalFactors?.[key];
-    if (!factor || !bw) return '';
+    if (!(factor > 0) || !(bw > 0)) return '';
     const goal = Math.round(bw * factor * 10) / 10;
     const p = period[key];
     const t = total[key];
     const pct = pctOf(p?.best ?? 0, goal);
     const tPct = pctOf(t?.best ?? 0, goal);
-    const name = L.EXERCISES[key].name;
     return `<div class="goal" style="--c:${colorOf(key)}">
-      <div class="goal-top"><span><span class="swatch"></span>${name}</span><span><b>${p ? kg(p.best) : '–'}</b> / ${kg(goal)} kg</span></div>
-      <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${name} ${pct} % av målet${showTotal ? `, bästa totalt ${tPct} %` : ''}">
+      <div class="goal-top"><span><span class="swatch"></span>${esc(name)}</span><span><b>${p ? kg(p.best) : '–'}</b> / ${kg(goal)} kg</span></div>
+      <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(name)} ${pct} % av målet${showTotal ? `, bästa totalt ${tPct} %` : ''}">
         ${showTotal ? `<span class="total" style="width:${tPct}%"></span>` : ''}<span style="width:${pct}%"></span>
       </div>
       <div class="goal-sub"><span>${kg(factor)} × kroppsvikt${rm(p)}</span><span>${pct} %</span></div>
@@ -497,6 +654,10 @@ function renderProgress() {
     .sort((a, b) => (a.date < b.date ? -1 : 1))
     .map((s) => ({ date: s.date, y: s.bodyweight }));
 
+  const repsKey = repsSeries.some((x) => x.key === store.ui.repsLift) ? store.ui.repsLift : repsSeries[0]?.key;
+  const repsSel = repsSeries.find((x) => x.key === repsKey);
+  const repsUnit = repsSel ? L.unitOf(L.exConfig(store.settings, repsSel.key, null, repsSel.name)) : '';
+
   view.innerHTML = `
     <header class="page-head"><h1>Progress</h1>
       <div class="seg" role="group" aria-label="Tidsintervall">
@@ -510,15 +671,24 @@ function renderProgress() {
     </div>
     <section class="card">
       <h2>Arbetsvikt per övning</h2>
+      ${series.length > 5 ? '<p class="sub">Välj vilka övningar som visas (högst 8 åt gången).</p>' : ''}
       <div class="legend" role="group" aria-label="Visa/dölj övningar">${legend}</div>
       <div id="chart-weight"></div>
       <p class="chart-note">Ofylld punkt = missade reps. Streckad linje = uppehåll längre än 5 veckor. Tryck/hovra i grafen för detaljer.</p>
-      <details class="table-view"><summary>Visa som tabell</summary>${progressTable(series)}</details>
+      <details class="table-view"><summary>Visa som tabell</summary>${progressTable(series.filter((x) => shown.has(x.key)))}</details>
     </section>
+    ${repsSeries.length ? `<section class="card">
+      <h2>Kroppsvikts- och tidsövningar</h2>
+      <label class="field"><span class="sr">Övning</span><select data-field="reps-lift">
+        ${repsSeries.map((x) => `<option value="${esc(x.key)}" ${x.key === repsKey ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
+      </select></label>
+      <div id="chart-reps"></div>
+      <p class="chart-note">Bästa set per pass i ${repsUnit ? 'sekunder' : 'reps'}. Ofylld punkt = under målet.</p>
+    </section>` : ''}
     <section class="card">
       <h2>Mål</h2>
-      <p class="sub">${esc(store.settings.goalNote || '')}${store.settings.goalNote ? ' · ' : ''}Kroppsvikt ${kg(bw)} kg · bästa klarade 5x5-vikt ${range === 'all' ? 'totalt' : `senaste ${RANGES.find((r) => r.id === range).label}`}${range === 'all' ? '' : ' – skuggat = bästa totalt'}. 1RM är uppskattat från dina set (Epleys formel).</p>
-      ${goals || '<p class="sub">Ställ in kroppsvikt och faktorer under Inställningar.</p>'}
+      <p class="sub">${esc(store.settings.goalNote || '')}${store.settings.goalNote ? ' · ' : ''}${bw > 0 ? `Kroppsvikt ${kg(bw)} kg · ` : ''}bästa vikt där alla set klarades ${range === 'all' ? 'totalt' : `senaste ${RANGES.find((r) => r.id === range).label}`}${range === 'all' ? '' : ' – skuggat = bästa totalt'}. 1RM är uppskattat från dina set (Epleys formel).</p>
+      ${goals || '<p class="sub">Inga mål än. Ange kroppsvikt (nedan eller i ett pass) och "Mål × kroppsvikt" på övningar i övningsbanken under Inställningar.</p>'}
     </section>
     <section class="card">
       <h2>Kroppsvikt</h2>
@@ -528,7 +698,7 @@ function renderProgress() {
     </section>`;
 
   const byDate = new Map(inRange.map((s) => [s.date, s]));
-  const visible = series.filter((s) => !hidden.has(s.key)).map((s) => ({
+  const visible = series.filter((s) => shown.has(s.key)).map((s) => ({
     key: s.key,
     name: s.name,
     color: colorOf(s.key),
@@ -542,6 +712,15 @@ function renderProgress() {
     },
   });
 
+  if (repsSel) {
+    lineChart($('#chart-reps'), [{
+      key: repsSel.key,
+      name: repsSel.name,
+      color: colorOf(repsSel.key),
+      points: repsSel.points.map((p) => ({ date: p.date, y: p.best, hollow: !p.success })),
+    }], { label: `${repsSel.name} över tid`, height: 220, unit: repsUnit || 'reps' });
+  }
+
   if (bwPoints.length >= 2) {
     lineChart($('#chart-bw'), [{ key: 'bw', name: 'Kroppsvikt', color: 'var(--ink-2)', points: bwPoints }], {
       label: 'Kroppsvikt över tid', height: 200, zero: false,
@@ -551,7 +730,7 @@ function renderProgress() {
 
 function bwSummary(points, current) {
   if (!points.length) {
-    return `<p class="sub">Ingen kroppsvikt loggad i intervallet. Nuvarande värde för målen: <b>${kg(current)} kg</b>.</p>`;
+    return `<p class="sub">Ingen kroppsvikt loggad i intervallet.${current > 0 ? ` Nuvarande värde för målen: <b>${kg(current)} kg</b>.` : ''}</p>`;
   }
   const first = points[0];
   const last = points.at(-1);
@@ -591,11 +770,6 @@ function numInput(path, label, step = 'any', unit = '') {
 function renderSettings() {
   const s = store.settings;
   const pending = pendingCount();
-  const lift = (key) => `<tr><th scope="row"><span class="swatch" style="--c:${colorOf(key)}"></span>${L.EXERCISES[key].name}</th>
-    <td><input data-setting="exercises.${key}.inc" data-type="num" inputmode="decimal" value="${kg(s.exercises[key].inc)}" aria-label="Ökning ${L.EXERCISES[key].name}"></td>
-    <td><input data-setting="exercises.${key}.start" data-type="num" inputmode="decimal" value="${kg(s.exercises[key].start)}" aria-label="Startvikt ${L.EXERCISES[key].name}"></td>
-    <td><input data-setting="goalFactors.${key}" data-type="num" inputmode="decimal" value="${kg(s.goalFactors?.[key] ?? '')}" aria-label="Målfaktor ${L.EXERCISES[key].name}"></td></tr>`;
-
   $('#view-settings').innerHTML = `
     <header class="page-head"><h1>Inställningar</h1></header>
     ${installCard()}
@@ -614,26 +788,24 @@ function renderSettings() {
       <p class="status" id="sync-status">${syncStatusText(pending)}</p>
     </section>
 
+    ${editorHtml(store.settings, colorOf)}
+
     <section class="card">
-      <h2>Progression och mål</h2>
-      <div class="table-wrap"><table class="settings-table">
-        <thead><tr><th>Övning</th><th>Ökning</th><th>Start</th><th>Mål ×</th></tr></thead>
-        <tbody>${L.EXERCISE_ORDER.map(lift).join('')}</tbody>
-      </table></div>
-      <p class="sub">Ökning och startvikt i kg. Mål × = målvikt som faktor av kroppsvikten.</p>
+      <h2>Deload och mål</h2>
       ${numInput('deloadPct', 'Deload', 1, '%')}
       ${numInput('failsBeforeDeload', 'Missade pass i rad innan deload', 1)}
       ${numInput('breakDays', 'Deload efter uppehåll på', 1, 'dagar')}
       <p class="sub">Efter ett uppehåll sänks vikten med deload-procenten per hel period (t.ex. 14 dagar → −10 %, 28 dagar → −20 %, max −50 %). 0 = av.</p>
       ${numInput('bodyweight', 'Kroppsvikt för mål', 'any', 'kg')}
-      <label class="field"><span>Måltext</span><input data-setting="goalNote" value="${esc(s.goalNote || '')}"></label>
-      <p class="sub">Senast loggade kroppsvikt i ett pass används före värdet ovan.</p>
+      <label class="field"><span>Måltext</span><input data-setting="goalNote" value="${esc(s.goalNote || '')}" placeholder="t.ex. Mål innan sommaren"></label>
+      <p class="sub">Målen ställs in per övning i övningsbanken (Mål × kroppsvikt). Senast loggade kroppsvikt i ett pass används före värdet ovan.</p>
     </section>
 
     <section class="card">
       <h2>Vilotimer</h2>
       ${numInput('restSuccess', 'Vila efter klarat set', 1, 'sek')}
       ${numInput('restFail', 'Vila efter missat set', 1, 'sek')}
+      <p class="sub">En övning kan ha egen vilotid i övningsbanken.</p>
       <label class="field inline check"><input type="checkbox" data-setting="sound" ${s.sound ? 'checked' : ''}><span>Ljudsignal</span></label>
       <label class="field inline check"><input type="checkbox" data-setting="vibrate" ${s.vibrate ? 'checked' : ''}><span>Vibration (Android)</span></label>
       ${numInput('barWeight', 'Stångvikt', 'any', 'kg')}
@@ -660,7 +832,11 @@ function syncStatusText(pending) {
   if (!store.syncEnabled) return 'Synk är inte inställd.';
   const when = store.lastSync ? new Date(store.lastSync).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' }) : 'aldrig';
   const err = syncState.error ? ` · ⚠ ${esc(syncState.error)}` : '';
-  const old = store.settingsUnsupported ? ' · ⚠ Inställningarna synkas inte – uppdatera Code.gs i arket (se README)' : '';
+  const old = store.settingsUnsupported
+    ? ' · ⚠ Inställningarna synkas inte – uppdatera Code.gs i arket (se README)'
+    : store.backendVersion && store.backendVersion < 3
+      ? ' · ⚠ Skriptet i arket är gammalt – uppdatera Code.gs (se README), annars sparas inte rep-intervall och egna övningar korrekt'
+      : '';
   return `Senast synkad: ${when}${pending ? ` · ${pending} ändringar väntar` : ''}${err}${old}`;
 }
 
@@ -672,6 +848,14 @@ function setSetting(path, value) {
   store.saveSettings();
   // Adress och nyckel är per enhet och ska inte räknas som en synkad ändring.
   if (path !== 'syncUrl' && path !== 'syncToken') settingsChanged();
+}
+
+// Programmet/banken har ändrats: spara, synka och bygg om ett orört utkast.
+function programChanged() {
+  store.saveSettings();
+  settingsChanged();
+  refreshLib();
+  if (!draft?.touched) draft = null;
 }
 
 // Inställningar (även grafval) synkas till arket strax efter en ändring.
@@ -768,6 +952,7 @@ function setTab(t) {
 }
 
 function render() {
+  refreshLib();
   for (const t of ['log', 'history', 'progress', 'settings']) {
     $(`#view-${t}`).hidden = t !== tab;
     const btn = $(`.tabs [data-tab="${t}"]`);
@@ -796,7 +981,35 @@ document.addEventListener('click', async (ev) => {
   if (!b) return;
   const i = Number(b.dataset.i);
   switch (b.dataset.act) {
-    case 'set': return tapSet(i, Number(b.dataset.j));
+    case 'set':
+      if (longPressed) { longPressed = false; return; }
+      return tapSet(i, Number(b.dataset.j));
+    case 'set-add': draft.exercises[i].sets.push(null); touch(); return renderLog();
+    case 'set-del': {
+      const sets = draft.exercises[i].sets;
+      if (sets.at(-1) != null && !confirm('Ta bort sista setet? Det är redan loggat.')) return;
+      sets.pop();
+      touch();
+      return renderLog();
+    }
+    case 'ex-remove': return removeFromDraft(i);
+    case 'picker-open': pickerOpen = true; renderLog(); return $('#view-log .picker select')?.focus();
+    case 'picker-close': pickerOpen = false; return renderLog();
+    case 'ex-create': {
+      const name = $('#new-ex-name')?.value.trim();
+      if (!name) return toast('Skriv ett namn på övningen.');
+      const ex = addExercise(store.settings, name, $('#new-ex-type').value);
+      programChanged();
+      toast(`${ex.name} finns nu i övningsbanken`);
+      return addToDraft(ex.key);
+    }
+    case 'use-alt': {
+      const e = draft.exercises[i];
+      const alt = L.suggest(otherSessions(), e.key, store.settings, draft.date, e.item).alt;
+      if (alt != null) e.weight = alt;
+      touch();
+      return renderLog();
+    }
     case 'w-': return changeWeight(i, -1);
     case 'w+': return changeWeight(i, 1);
     case 'deload': return toggleDeload();
@@ -804,20 +1017,11 @@ document.addEventListener('click', async (ev) => {
     case 'install-dismiss': store.ui.installDismissed = true; store.saveUi(); return renderLog();
     case 'use-sug': {
       const e = draft.exercises[i];
-      e.weight = L.suggest(otherSessions(), e.key, store.settings, draft.date).weight;
+      e.weight = L.suggest(otherSessions(), e.key, store.settings, draft.date, e.item).weight;
       touch();
       return renderLog();
     }
-    case 'workout': {
-      const w = b.dataset.w;
-      if (w === draft.workout) return;
-      const logged = draft.exercises.some((e) => e.sets.some((r) => r != null));
-      if (logged && !confirm(`Byta till pass ${w}? Loggade set i det här passet försvinner.`)) return;
-      const keep = { id: draft.id, date: draft.date, comment: draft.comment, bodyweight: draft.bodyweight, editing: draft.editing };
-      draft = { ...L.buildSession(otherSessions(), w, store.settings, draft.date), ...keep, touched: true };
-      store.setDraft(draft);
-      return renderLog();
-    }
+    case 'workout': return switchWorkout(b.dataset.w);
     case 'save': return saveSession();
     case 'reset': {
       const logged = draft.exercises.some((e) => e.sets.some((r) => r != null));
@@ -839,10 +1043,11 @@ document.addEventListener('click', async (ev) => {
     case 'more': historyLimit += 30; return renderHistory();
     case 'range': store.ui.range = b.dataset.range; store.saveUi(); settingsChanged(); return renderProgress();
     case 'toggle-lift': {
-      const h = new Set(store.ui.hiddenLifts || []);
-      if (h.has(b.dataset.key)) h.delete(b.dataset.key);
-      else h.add(b.dataset.key);
-      store.ui.hiddenLifts = [...h];
+      const shown = shownLiftKeys(progressSeries(store.sessions.filter((x) => x.date >= rangeStart(store.ui.range || '1y'))).weightSeries);
+      if (shown.has(b.dataset.key)) shown.delete(b.dataset.key);
+      else if (shown.size >= 8) return toast('Högst 8 övningar åt gången – dölj någon först.');
+      else shown.add(b.dataset.key);
+      store.ui.shownLifts = [...shown];
       store.saveUi();
       settingsChanged();
       return renderProgress();
@@ -877,7 +1082,31 @@ document.addEventListener('click', async (ev) => {
       return;
     }
     default:
+      if (b.dataset.act.startsWith('ed-')) {
+        if (editorAction(b.dataset.act, b.dataset, store.settings)) programChanged();
+        return renderSettings();
+      }
   }
+});
+
+// Håll inne en set-ring → skriv in exakt antal.
+let longPressed = false;
+let pressTimer = null;
+document.addEventListener('pointerdown', (ev) => {
+  const ring = ev.target.closest('.set[data-act="set"]');
+  if (!ring) return;
+  longPressed = false;
+  clearTimeout(pressTimer);
+  pressTimer = setTimeout(() => {
+    longPressed = true;
+    promptSet(Number(ring.dataset.i), Number(ring.dataset.j));
+  }, 550);
+});
+for (const t of ['pointerup', 'pointercancel', 'pointerleave']) {
+  document.addEventListener(t, () => clearTimeout(pressTimer), true);
+}
+document.addEventListener('contextmenu', (ev) => {
+  if (ev.target.closest('.set')) ev.preventDefault();
 });
 
 document.addEventListener('input', (ev) => {
@@ -893,7 +1122,19 @@ document.addEventListener('change', (ev) => {
     el.value = '';
     return;
   }
+  if (el.dataset.ed) {
+    if (editorChange(el, store.settings)) programChanged();
+    return renderSettings();
+  }
   const f = el.dataset.field;
+  if (f === 'workout') return switchWorkout(el.value);
+  if (f === 'pick-ex') { if (el.value) addToDraft(el.value); return; }
+  if (f === 'reps-lift') {
+    store.ui.repsLift = el.value;
+    store.saveUi();
+    settingsChanged();
+    return renderProgress();
+  }
   if (f) {
     if (f === 'weight') {
       const v = L.parseNum(el.value);

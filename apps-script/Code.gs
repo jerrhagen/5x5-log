@@ -11,12 +11,13 @@
  */
 
 const TOKEN = 'BYT-TILL-EN-EGEN-HEMLIG-NYCKEL';
+const VERSION = 3; // appen varnar om skriptet i arket är äldre än den behöver
 const SKRIV_TILL_ARSFLIK = true;
 
 const LOGG = 'Logg';
 const INST = 'Inställningar';
 const UPPDATERAD = '_uppdaterad';
-const HEADERS = ['id', 'datum', 'pass', 'övning', 'vikt', 'reps', 'kommentar', 'kroppsvikt', 'uppdaterad'];
+const HEADERS = ['id', 'datum', 'pass', 'övning', 'vikt', 'reps', 'kommentar', 'kroppsvikt', 'uppdaterad', 'mål', 'nyckel'];
 
 const ALIASES = {
   squat: ['knäböj', 'squat'],
@@ -52,7 +53,7 @@ function handle_(req) {
         return json_({ ok: true, name: SpreadsheetApp.getActive().getName() });
       case 'list': {
         const st = readSettings_();
-        return json_({ ok: true, sessions: readSessions_(), settings: st.settings, settingsUpdatedAt: st.updatedAt });
+        return json_({ ok: true, version: VERSION, sessions: readSessions_(), settings: st.settings, settingsUpdatedAt: st.updatedAt });
       }
       case 'saveSettings': {
         const cur = readSettings_();
@@ -103,6 +104,11 @@ function loggSheet_() {
     sh.getRange('F:F').setNumberFormat('@');
     sh.getRange('I:I').setNumberFormat('@');
   }
+  // Äldre flikar saknar de senaste kolumnerna (mål, nyckel) – lägg till rubrikerna.
+  if (sh.getLastColumn() < HEADERS.length) {
+    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
+    sh.getRange('K:K').setNumberFormat('@');
+  }
   return sh;
 }
 
@@ -130,7 +136,7 @@ function readSessions_() {
       x = x.trim();
       return x === '' || x === '-' ? null : Number(x);
     });
-    s.exercises.push({ key: keyOf_(r[3]), name: r[3], weight: num_(r[4]), targetReps: 5, sets: reps });
+    s.exercises.push({ key: r[10] || keyOf_(r[3]), name: r[3], weight: num_(r[4]), targetReps: num_(r[9]) || 5, sets: reps });
   });
   return order.map(function (id) { return map[id]; });
 }
@@ -143,6 +149,8 @@ function sessionRows_(s) {
       i === 0 ? s.comment || '' : '',
       i === 0 && s.bodyweight != null ? s.bodyweight : '',
       String(s.updatedAt || Date.now()),
+      e.targetReps || '',
+      e.key || '',
     ];
   });
 }
@@ -160,6 +168,7 @@ function upsert_(sessions) {
   sessions.forEach(function (s) { ids[s.id] = true; });
   const keep = readRows_().filter(function (r) { return r[0] && !ids[r[0]]; }).map(function (r) {
     r[4] = num_(r[4]);
+    if (r[7] !== '') r[7] = num_(r[7]);
     return r;
   });
   sessions.forEach(function (s) { keep.push.apply(keep, sessionRows_(s)); });
@@ -171,6 +180,7 @@ function remove_(ids) {
   ids.forEach(function (id) { del[id] = true; });
   writeAll_(readRows_().filter(function (r) { return r[0] && !del[r[0]]; }).map(function (r) {
     r[4] = num_(r[4]);
+    if (r[7] !== '') r[7] = num_(r[7]);
     return r;
   }));
 }

@@ -24,10 +24,129 @@ export const PROGRAM = {
 // Fast ordning = fast färg per övning (färgen följer övningen, aldrig rangordningen).
 export const EXERCISE_ORDER = ['squat', 'bench', 'row', 'ohp', 'deadlift'];
 
+// ---------- Övningsbank och program ----------
+
+export const TYPES = {
+  barbell: 'Skivstång',
+  dumbbell: 'Hantlar/kettlebell',
+  machine: 'Maskin/kabel',
+  bodyweight: 'Kroppsvikt',
+  time: 'Tid',
+};
+
+export const PROGRESSIONS = {
+  linear: 'Linjär – öka när alla set klaras (5x5)',
+  double: 'Dubbel – öka reps upp till max, sedan vikten',
+  manual: 'Manuell – påminn när det är dags',
+};
+
+// Rimliga utgångsvärden när man lägger till en ny övning av en viss typ.
+export const TYPE_DEFAULTS = {
+  barbell: { sets: 3, repsMin: 6, repsMax: 10, progression: 'double', inc: 2.5, start: 20 },
+  dumbbell: { sets: 3, repsMin: 8, repsMax: 12, progression: 'double', inc: 2, start: 6 },
+  machine: { sets: 3, repsMin: 10, repsMax: 15, progression: 'double', inc: 2.5, start: 10 },
+  bodyweight: { sets: 3, repsMin: 8, repsMax: 15, progression: 'double', inc: 0, start: 0 },
+  time: { sets: 3, repsMin: 30, repsMax: 60, progression: 'double', inc: 0, start: 0 },
+};
+
+const lib = (key, name, type, sets, repsMin, repsMax, progression, inc, start) =>
+  ({ key, name, type, sets, repsMin, repsMax, progression, inc, start, rest: null });
+
+export const DEFAULT_LIBRARY = [
+  lib('squat', 'Knäböj', 'barbell', 5, 5, 5, 'linear', 2.5, 20),
+  lib('bench', 'Bänkpress', 'barbell', 5, 5, 5, 'linear', 2.5, 20),
+  lib('row', 'Stångrodd', 'barbell', 5, 5, 5, 'linear', 2.5, 30),
+  lib('ohp', 'Axelpress', 'barbell', 5, 5, 5, 'linear', 2.5, 20),
+  lib('deadlift', 'Marklyft', 'barbell', 1, 5, 5, 'linear', 5, 40),
+  lib('hip-thrust', 'Hip thrust', 'barbell', 3, 8, 12, 'double', 5, 40),
+  lib('rumansk-marklyft', 'Rumänsk marklyft', 'barbell', 3, 8, 12, 'double', 2.5, 30),
+  lib('goblet-squat', 'Goblet squat', 'dumbbell', 3, 8, 12, 'double', 2, 10),
+  lib('utfall', 'Utfall', 'dumbbell', 3, 8, 12, 'double', 2, 6),
+  lib('hantelpress', 'Hantelpress', 'dumbbell', 3, 8, 12, 'double', 2, 8),
+  lib('hantelrodd', 'Hantelrodd', 'dumbbell', 3, 8, 12, 'double', 2, 10),
+  lib('axelpress-hantlar', 'Axelpress hantlar', 'dumbbell', 3, 8, 12, 'double', 2, 6),
+  lib('sidolyft', 'Sidolyft', 'dumbbell', 3, 10, 15, 'double', 1, 4),
+  lib('bicepscurl', 'Bicepscurl', 'dumbbell', 3, 8, 12, 'double', 1, 6),
+  lib('benpress', 'Benpress', 'machine', 3, 10, 15, 'double', 5, 40),
+  lib('latsdrag', 'Latsdrag', 'machine', 3, 8, 12, 'double', 2.5, 25),
+  lib('sittande-rodd', 'Sittande rodd', 'machine', 3, 8, 12, 'double', 2.5, 25),
+  lib('bencurl', 'Bencurl', 'machine', 3, 10, 15, 'double', 2.5, 15),
+  lib('benspark', 'Benspark', 'machine', 3, 10, 15, 'double', 2.5, 15),
+  lib('triceps-pushdown', 'Triceps pushdown', 'machine', 3, 10, 15, 'double', 2.5, 15),
+  lib('armhavningar', 'Armhävningar', 'bodyweight', 3, 8, 15, 'double', 0, 0),
+  lib('chins', 'Chins', 'bodyweight', 3, 5, 10, 'double', 2.5, 0),
+  lib('dips', 'Dips', 'bodyweight', 3, 6, 12, 'double', 2.5, 0),
+  lib('planka', 'Planka', 'time', 3, 30, 60, 'double', 0, 0),
+];
+
+const item = (key, sets, repsMin, repsMax = repsMin) => ({ key, sets, repsMin, repsMax });
+
+export const DEFAULT_PROGRAMS = [
+  { id: 'A', name: 'A', items: [item('squat', 5, 5), item('bench', 5, 5), item('row', 5, 5)] },
+  { id: 'B', name: 'B', items: [item('squat', 5, 5), item('ohp', 5, 5), item('deadlift', 1, 5)] },
+];
+
+export const FREE = 'free';
+export const FREE_NAME = 'Fritt pass';
+
+function normalizeExercise(e) {
+  const t = TYPES[e.type] ? e.type : 'barbell';
+  const d = TYPE_DEFAULTS[t];
+  const n = (v, def) => { const x = parseNum(v); return x == null ? def : x; };
+  const repsMin = n(e.repsMin, d.repsMin);
+  return {
+    key: String(e.key || exerciseKey(e.name)),
+    name: String(e.name || e.key || 'Övning'),
+    type: t,
+    sets: Math.max(1, Math.round(n(e.sets, d.sets))),
+    repsMin,
+    repsMax: Math.max(repsMin, n(e.repsMax, d.repsMax)),
+    progression: PROGRESSIONS[e.progression] ? e.progression : d.progression,
+    inc: Math.max(0, n(e.inc, d.inc)),
+    start: Math.max(0, n(e.start, d.start)),
+    rest: e.rest == null || e.rest === '' ? null : n(e.rest, null),
+  };
+}
+
+// Övningsbanken. Innan banken fanns låg ökning/startvikt under settings.exercises – de följer med.
+export function getLibrary(settings = DEFAULT_SETTINGS) {
+  if (Array.isArray(settings?.library) && settings.library.length) return settings.library.map(normalizeExercise);
+  return DEFAULT_LIBRARY.map((e) => {
+    const legacy = settings?.exercises?.[e.key] || {};
+    return normalizeExercise({ ...e, ...(legacy.inc != null ? { inc: legacy.inc } : {}), ...(legacy.start != null ? { start: legacy.start } : {}) });
+  });
+}
+
+export function getPrograms(settings = DEFAULT_SETTINGS) {
+  const p = Array.isArray(settings?.programs) && settings.programs.length ? settings.programs : DEFAULT_PROGRAMS;
+  return p.map((x, i) => ({
+    id: String(x.id ?? x.name ?? i),
+    name: String(x.name ?? x.id ?? `Pass ${i + 1}`),
+    items: (x.items || []).map((it) => ({ key: it.key, sets: parseNum(it.sets), repsMin: parseNum(it.repsMin), repsMax: parseNum(it.repsMax) })),
+  }));
+}
+
+export function findExercise(settings, key) {
+  return getLibrary(settings).find((e) => e.key === key) || null;
+}
+
+// Inställningar för en övning, ev. med passmallens set/reps ovanpå.
+export function exConfig(settings, key, it = null, fallbackName = null) {
+  const base = findExercise(settings, key)
+    || normalizeExercise({ key, name: fallbackName || exerciseName(key), type: 'barbell', sets: 3, repsMin: 5, repsMax: 5, progression: 'manual', inc: 2.5, start: 20 });
+  const cfg = { ...base };
+  if (it?.sets) cfg.sets = Math.max(1, Math.round(it.sets));
+  if (it?.repsMin) cfg.repsMin = it.repsMin;
+  if (it?.repsMax) cfg.repsMax = Math.max(cfg.repsMin, it.repsMax);
+  return cfg;
+}
+
+export const unitOf = (cfg) => (cfg?.type === 'time' ? 's' : '');
+export const isWeighted = (cfg) => cfg.type !== 'bodyweight' && cfg.type !== 'time';
+
 export const DEFAULT_SETTINGS = {
-  exercises: Object.fromEntries(
-    Object.entries(EXERCISES).map(([k, v]) => [k, { inc: v.inc, start: v.start }]),
-  ),
+  library: null, // null = standardbanken (se getLibrary)
+  programs: null, // null = 5x5 A/B (se getPrograms)
   deloadPct: 10,
   failsBeforeDeload: 3,
   breakDays: 14,
@@ -39,10 +158,10 @@ export const DEFAULT_SETTINGS = {
   vibrate: true,
   syncUrl: '',
   syncToken: '',
-  // Mål = kroppsvikt × faktor (som i målsektionen i "Biff").
-  bodyweight: 86,
-  goalFactors: { squat: 1.5, bench: 1, row: 1, ohp: 0.7, deadlift: 2 },
-  goalNote: 'Mål innan 40 (gärna innan 38)',
+  // Mål = kroppsvikt × faktor. Fylls i per person (synkas via arket).
+  bodyweight: 0,
+  goalFactors: {},
+  goalNote: '',
 };
 
 const ALIASES = {
@@ -113,90 +232,169 @@ export function sortByDateDesc(sessions) {
   );
 }
 
-export function nextWorkout(sessions) {
-  const last = sortByDateDesc(liveSessions(sessions)).find((s) => s.workout === 'A' || s.workout === 'B');
-  return last?.workout === 'A' ? 'B' : 'A';
+// Passen roteras i programordning; fria pass påverkar inte rotationen.
+export function nextWorkout(sessions, settings = DEFAULT_SETTINGS) {
+  const programs = getPrograms(settings);
+  if (!programs.length) return FREE;
+  const names = programs.map((p) => p.name);
+  const last = sortByDateDesc(liveSessions(sessions)).find((s) => names.includes(s.workout));
+  if (!last) return programs[0].id;
+  return programs[(names.indexOf(last.workout) + 1) % programs.length].id;
 }
 
-function exSettings(settings, key) {
-  return settings.exercises?.[key] || { inc: EXERCISES[key]?.inc ?? 2.5, start: EXERCISES[key]?.start ?? 20 };
-}
-
-// Föreslagen vikt enligt StrongLifts-logik:
-// klarade alla set → öka, missade → samma vikt, N missar i rad på samma vikt → deload.
-export function deloadWeight(weight, settings = DEFAULT_SETTINGS, pct = settings.deloadPct ?? 10) {
-  return Math.max(settings.barWeight ?? 20, roundTo(weight * (1 - pct / 100), 2.5));
+// Lägsta vikt efter deload: tom stång för skivstång, annars noll.
+export function deloadWeight(weight, settings = DEFAULT_SETTINGS, pct = settings.deloadPct ?? 10, cfg = null) {
+  const type = cfg?.type ?? 'barbell';
+  const step = type === 'barbell' ? 2.5 : cfg?.inc || 0.5;
+  const min = type === 'barbell' ? settings.barWeight ?? 20 : 0;
+  return Math.max(min, roundTo(weight * (1 - pct / 100), step));
 }
 
 const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+const repsText = (sets, unit) => sets.map((r) => (r == null ? '–' : `${r}${unit}`)).join('/');
 
-// Föreslagen vikt enligt StrongLifts-logik:
-//  • långt uppehåll → deload (deloadPct per påbörjad period om breakDays dagar, max 50 %)
-//  • klarade alla set → öka
-//  • missade → samma vikt, N missar i rad på samma vikt → deload
-export function suggest(sessions, key, settings = DEFAULT_SETTINGS, beforeDate = null) {
-  const { inc, start } = exSettings(settings, key);
-  const history = sortByDateDesc(liveSessions(sessions))
+function historyFor(sessions, key, beforeDate) {
+  return sortByDateDesc(liveSessions(sessions))
     .filter((s) => !beforeDate || s.date < beforeDate)
     .map((s) => ({ date: s.date, e: s.exercises.find((e) => e.key === key && e.sets.some((r) => r != null)) }))
     .filter((x) => x.e);
+}
 
-  if (!history.length) return { weight: start, reason: 'Startvikt', kind: 'start' };
+// Förslag för nästa gång: { weight, reps (mål per set), reason, kind, alt? }
+//  • linjär (5x5): klarade alla set → öka, missar → samma vikt, N missar i rad → deload
+//  • dubbel: öka reps till max i alla set, sedan vikten (och börja om på min)
+//  • manuell: samma vikt, men påminn när samma vikt klarats flera gånger i rad
+//  • långt uppehåll → deload (deloadPct per hel period om breakDays dagar, max 50 %)
+export function suggest(sessions, key, settings = DEFAULT_SETTINGS, beforeDate = null, it = null) {
+  const cfg = exConfig(settings, key, it);
+  const unit = unitOf(cfg);
+  const startReps = cfg.progression === 'linear' ? cfg.repsMax : cfg.repsMin;
+  const history = historyFor(sessions, key, beforeDate);
+
+  if (!history.length) {
+    const reason = isWeighted(cfg) ? 'Startvikt – välj en vikt du klarar med god teknik' : 'Första gången';
+    return { weight: cfg.start, reps: startReps, reason, kind: 'start' };
+  }
 
   const last = history[0].e;
+  const loaded = last.weight > 0;
   const pct = settings.deloadPct ?? 10;
+  const limit = settings.failsBeforeDeload ?? 3;
   const breakDays = settings.breakDays ?? 14;
   const gap = daysBetween(history[0].date, beforeDate || todayISO());
-  if (breakDays > 0 && gap >= breakDays) {
+  if (loaded && breakDays > 0 && gap >= breakDays) {
     const p = Math.min(50, pct * Math.floor(gap / breakDays));
-    const weeks = Math.round(gap / 7);
-    return { weight: deloadWeight(last.weight, settings, p), reason: `Deload −${p} % efter ${weeks} veckors uppehåll`, kind: 'deload' };
+    return {
+      weight: deloadWeight(last.weight, settings, p, cfg),
+      reps: startReps,
+      reason: `Deload −${p} % efter ${Math.round(gap / 7)} veckors uppehåll`,
+      kind: 'deload',
+    };
   }
 
-  if (isSuccess(last)) {
-    return { weight: last.weight + inc, reason: `+${fmtKg(inc)} kg – klarade alla set förra gången`, kind: 'up' };
+  const atLeast = (e, n) => e.sets.length > 0 && e.sets.every((r) => r != null && r >= n);
+  const sameWeightStreak = (test) => {
+    let n = 0;
+    for (const { e } of history) {
+      if (e.weight !== last.weight || !test(e)) break;
+      n++;
+    }
+    return n;
+  };
+  const inc = cfg.inc;
+
+  if (cfg.progression === 'linear') {
+    const reps = cfg.repsMax;
+    if (atLeast(last, reps)) {
+      return { weight: last.weight + inc, reps, reason: `+${fmtKg(inc)} kg – klarade alla set förra gången`, kind: 'up' };
+    }
+    const fails = sameWeightStreak((e) => !atLeast(e, reps));
+    if (loaded && fails >= limit) {
+      return { weight: deloadWeight(last.weight, settings, pct, cfg), reps, reason: `Deload −${pct} % efter ${fails} missade pass i rad`, kind: 'deload' };
+    }
+    return { weight: last.weight, reps, reason: `Samma vikt – försök ${fails + 1} av ${limit}`, kind: 'same' };
   }
 
-  let fails = 0;
-  for (const { e } of history) {
-    if (e.weight !== last.weight || isSuccess(e)) break;
-    fails++;
+  if (cfg.progression === 'double') {
+    const { repsMin: min, repsMax: max } = cfg;
+    if (atLeast(last, max)) {
+      if (isWeighted(cfg) && inc > 0) {
+        return { weight: last.weight + inc, reps: min, reason: `Alla set nådde ${max} → +${fmtKg(inc)} kg, börja om på ${min} reps`, kind: 'up' };
+      }
+      if (cfg.type === 'time') {
+        return { weight: last.weight, reps: max, reason: `Du klarar ${max} s i alla set – gör övningen svårare eller höj maxtiden`, kind: 'top' };
+      }
+      return {
+        weight: last.weight,
+        reps: max,
+        reason: `Du klarar ${cfg.sets} × ${max} – lägg på vikt${inc > 0 ? ` (+${fmtKg(inc)} kg)` : ''} eller välj en svårare variant`,
+        kind: 'top',
+        ...(inc > 0 ? { alt: last.weight + inc } : {}),
+      };
+    }
+    const fails = sameWeightStreak((e) => e.sets.some((r) => r == null || r < min));
+    if (loaded && isWeighted(cfg) && fails >= limit) {
+      return { weight: deloadWeight(last.weight, settings, pct, cfg), reps: min, reason: `Deload −${pct} % efter ${fails} pass under ${min} reps`, kind: 'deload' };
+    }
+    const worst = Math.min(...last.sets.map((r) => r ?? 0));
+    const aim = Math.min(max, Math.max(min, worst + (cfg.type === 'time' ? 5 : 1)));
+    const prefix = isWeighted(cfg) || loaded ? 'Samma vikt – sikta' : 'Sikta';
+    return { weight: last.weight, reps: aim, reason: `${prefix} på ${aim}${unit || ' reps'} i alla set (förra: ${repsText(last.sets, unit)})`, kind: 'same' };
   }
-  const limit = settings.failsBeforeDeload ?? 3;
-  if (fails >= limit) {
-    return { weight: deloadWeight(last.weight, settings), reason: `Deload −${pct} % efter ${fails} missade pass i rad`, kind: 'deload' };
+
+  // manuell: målet är intervallets min; påminn när det börjar gå lätt
+  const reps = cfg.repsMin;
+  const streak = sameWeightStreak((e) => atLeast(e, reps));
+  const easy = cfg.repsMax > cfg.repsMin && atLeast(last, cfg.repsMax);
+  if ((streak >= 3 || easy) && inc > 0 && (isWeighted(cfg) || loaded)) {
+    return {
+      weight: last.weight,
+      reps,
+      reason: easy
+        ? `Du klarade ${cfg.repsMax} reps i alla set – dags att öka?`
+        : `Du har klarat ${fmtKg(last.weight)} kg ${streak} gånger i rad – dags att öka?`,
+      kind: 'nudge',
+      alt: last.weight + inc,
+    };
   }
-  return { weight: last.weight, reason: `Samma vikt – försök ${fails + 1} av ${limit}`, kind: 'same' };
+  return { weight: last.weight, reps, reason: 'Samma vikt som förra gången – öka när det känns lätt', kind: 'same' };
 }
 
 // Manuell deload ("lugnare period"): utgå från senast lyfta vikt, men aldrig högre än förslaget.
-export function manualDeload(sessions, key, settings = DEFAULT_SETTINGS, beforeDate = null) {
-  const sug = suggest(sessions, key, settings, beforeDate);
-  const last = sortByDateDesc(liveSessions(sessions))
-    .filter((s) => !beforeDate || s.date < beforeDate)
-    .map((s) => s.exercises.find((e) => e.key === key && e.sets.some((r) => r != null)))
-    .find(Boolean);
-  return Math.min(sug.weight, deloadWeight(last ? last.weight : sug.weight, settings));
+export function manualDeload(sessions, key, settings = DEFAULT_SETTINGS, beforeDate = null, it = null) {
+  const cfg = exConfig(settings, key, it);
+  const sug = suggest(sessions, key, settings, beforeDate, it);
+  const last = historyFor(sessions, key, beforeDate)[0]?.e;
+  const base = last ? last.weight : sug.weight;
+  if (!(base > 0)) return sug.weight;
+  return Math.min(sug.weight, deloadWeight(base, settings, settings.deloadPct ?? 10, cfg));
 }
 
-export function buildSession(sessions, workout, settings = DEFAULT_SETTINGS, date = todayISO()) {
+// En rad i ett pass, med förslag på vikt och reps.
+export function makeEntry(sessions, key, settings = DEFAULT_SETTINGS, date = todayISO(), it = null) {
+  const cfg = exConfig(settings, key, it);
+  const s = suggest(sessions, key, settings, date, it);
+  return {
+    key,
+    name: cfg.name,
+    weight: s.weight,
+    targetReps: s.reps,
+    sets: Array(cfg.sets).fill(null),
+    ...(it ? { item: { sets: it.sets, repsMin: it.repsMin, repsMax: it.repsMax } } : {}),
+  };
+}
+
+export function buildSession(sessions, workoutId, settings = DEFAULT_SETTINGS, date = todayISO()) {
+  const programs = getPrograms(settings);
+  const prog = workoutId === FREE ? null : programs.find((p) => p.id === workoutId) || programs[0] || null;
   return {
     id: uid(),
     date,
-    workout,
+    workout: prog ? prog.name : FREE_NAME,
+    programId: prog ? prog.id : FREE,
     comment: '',
     bodyweight: null,
-    exercises: PROGRAM[workout].map((p) => {
-      const s = suggest(sessions, p.key, settings, date);
-      return {
-        key: p.key,
-        name: exerciseName(p.key),
-        weight: s.weight,
-        targetReps: p.reps,
-        sets: Array(p.sets).fill(null),
-        suggestion: s,
-      };
-    }),
+    exercises: prog ? prog.items.map((it) => makeEntry(sessions, it.key, settings, date, it)) : [],
   };
 }
 
@@ -229,7 +427,7 @@ export function exerciseVolume(ex) {
   return ex.sets.reduce((sum, r) => sum + (r || 0) * ex.weight, 0);
 }
 
-// Tidsserie per övning: [{date, weight, e1rm, volume, success}]
+// Tidsserie per övning: [{date, weight, e1rm, volume, best, success}]
 export function seriesByExercise(sessions) {
   const map = new Map();
   for (const s of [...liveSessions(sessions)].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))) {
@@ -242,6 +440,7 @@ export function seriesByExercise(sessions) {
         weight: ex.weight,
         e1rm: Math.round(best * 10) / 10,
         volume: exerciseVolume(ex),
+        best: Math.max(...ex.sets.map((r) => r || 0)), // bästa set (reps eller sekunder)
         success: isSuccess(ex),
         sets: ex.sets,
       });
