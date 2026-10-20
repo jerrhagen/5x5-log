@@ -16,7 +16,7 @@ En enkel träningslogg som fungerar på både dator och mobil. Standardprogramme
   - Efter ett uppehåll sänks förslaget automatiskt: −10 % per 14 dagar utan träning (max −50 %).
   - Allt detta går att ändra under Inställningar.
 - **Lättare pass**: en knapp i passvyn som sänker alla vikter 10 % under senaste vikten, för en lugnare period. Progressionen bygger sedan upp igen därifrån, och passet märks med "Deload-pass" i kommentaren.
-- **Set-ringar**: tryck en gång för målet (t.ex. 5 reps), och tryck igen för att minska antalet. Håll inne för att skriva in exakt antal, t.ex. fler reps än målet.
+- **Set-ringar**: tryck en gång för målet (t.ex. 5 reps), och tryck igen för att minska antalet. Håll inne och dra uppåt/nedåt för att ändra antalet, t.ex. fler reps än målet (ett hjul visar värdet, ett steg per några millimeter). Drar man under 0 töms setet. På datorn går det även med piltangenterna.
 - **Vilotimer**: startar automatiskt när ett set är klart. Den är 3 min efter ett klarat set och 5 min efter ett missat. Du får ljud och vibration när det är dags. Skärmen hålls tänd medan timern går.
 - **Kommentar och kroppsvikt** kan läggas till per pass.
 - **Progress**:

@@ -268,7 +268,7 @@ function renderLog() {
       <button class="btn primary" data-act="save">${d.editing ? 'Spara ändringar' : 'Spara pass'}</button>
       <button class="btn ghost" data-act="reset">${d.editing ? 'Avbryt' : 'Börja om'}</button>
     </div>
-    <p class="tip">Tryck på en ring när setet är klart. Tryck igen för att minska antalet, eller håll inne för att skriva in exakt antal. Vilotimern startar automatiskt.</p>`;
+    <p class="tip">Tryck på en ring när setet är klart. Tryck igen för att minska antalet, eller håll inne och dra uppåt/nedåt för att ändra antal. Vilotimern startar automatiskt.</p>`;
   // Visa valt pass i chipraden även när den är bredare än skärmen.
   const row = $('.pass-chips', view);
   const sel = row && $('[aria-pressed="true"]', row);
@@ -325,18 +325,6 @@ function setReps(i, j, next) {
 function tapSet(i, j) {
   const e = draft.exercises[i];
   setReps(i, j, L.cycleReps(e.sets[j], e.targetReps));
-}
-
-// Håll inne en ring för att skriva in exakt antal (t.ex. fler reps än målet).
-function promptSet(i, j) {
-  const e = draft.exercises[i];
-  const unit = L.unitOf(cfgOf(e)) ? 'sekunder' : 'reps';
-  const v = prompt(`${e.name} – set ${j + 1}: antal ${unit}`, e.sets[j] ?? e.targetReps);
-  if (v == null) return;
-  if (v.trim() === '') return setReps(i, j, null);
-  const n = L.parseNum(v);
-  if (n == null || n < 0) return toast('Ange ett tal.');
-  setReps(i, j, Math.round(n));
 }
 
 function addToDraft(key) {
@@ -992,7 +980,7 @@ document.addEventListener('click', async (ev) => {
   const i = Number(b.dataset.i);
   switch (b.dataset.act) {
     case 'set':
-      if (longPressed) { longPressed = false; return; }
+      if (suppressClick) { suppressClick = false; return; }
       return tapSet(i, Number(b.dataset.j));
     case 'set-add': draft.exercises[i].sets.push(null); touch(); return renderLog();
     case 'set-del': {
@@ -1099,22 +1087,180 @@ document.addEventListener('click', async (ev) => {
   }
 });
 
-// Håll inne en set-ring → skriv in exakt antal.
-let longPressed = false;
-let pressTimer = null;
+// ---------------------------------------------------------------- håll inne och dra på en ring
+// Håll inne en set-ring en kort stund → ett litet hjul visas. Dra uppåt för fler reps,
+// nedåt för färre (ett steg per STEP_PX, så det går lätt att justera ett par steg).
+// Släpp för att spara. Under 0 = tomt set. Tidsövningar ändras 5 s per steg.
+const HOLD_MS = 300;
+const STEP_PX = 22;
+let adj = null; // { ring, i, j, y0, start, value, step, max }
+let press = null; // { ring, x, y, timer, touch }
+let swipe = null; // svep som började på en ring: { lastY, lastT, v }
+let suppressClick = false;
+
+// Ringarna har touch-action: none (annars hinner webbläsaren börja scrolla innan hjulet
+// visas). Ett vanligt svep som börjar på en ring scrollar därför sidan "för hand", med fart.
+function glide(v) {
+  let last = performance.now();
+  const step = (now) => {
+    const dt = now - last;
+    last = now;
+    window.scrollBy(0, v * dt);
+    v *= 0.95 ** (dt / 16);
+    if (Math.abs(v) > 0.02) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+const adjText = (v) => (v == null ? '' : v < 0 ? '–' : String(v));
+
+function adjustOverlay() {
+  let el = $('#adjust');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'adjust';
+    el.className = 'adjust';
+    el.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function renderAdjust() {
+  const { value, step, max, unit } = adj;
+  const at = (k) => {
+    const v = value + k * step;
+    return v > max || v < -step ? null : v;
+  };
+  const el = adjustOverlay();
+  el.innerHTML = `
+    <span class="far">${adjText(at(2))}</span>
+    <span class="near">${adjText(at(1))}</span>
+    <span class="cur">${adjText(value)}<small>${value >= 0 ? unit : ''}</small></span>
+    <span class="near">${adjText(at(-1))}</span>
+    <span class="far">${adjText(at(-2))}</span>
+    <span class="adj-hint">▲ dra ▼</span>`;
+  adj.ring.innerHTML = value < 0 ? '' : String(value);
+}
+
+function startAdjust(ring, y0) {
+  const i = Number(ring.dataset.i);
+  const j = Number(ring.dataset.j);
+  const e = draft.exercises[i];
+  const isTime = Boolean(L.unitOf(cfgOf(e)));
+  adj = {
+    ring, i, j, y0,
+    start: e.sets[j] ?? e.targetReps,
+    step: isTime ? 5 : 1,
+    max: isTime ? 3600 : 99,
+    unit: isTime ? 's' : '',
+  };
+  adj.value = adj.start;
+  suppressClick = true;
+  ring.classList.add('adjusting');
+  renderAdjust();
+  const el = adjustOverlay();
+  const r = ring.getBoundingClientRect();
+  const below = r.top < 190;
+  el.classList.toggle('below', below);
+  el.style.left = `${r.left + r.width / 2}px`;
+  el.style.top = `${below ? r.bottom + 10 : r.top - 10}px`;
+  el.hidden = false;
+  if (navigator.vibrate && store.settings.vibrate) navigator.vibrate(12);
+}
+
+function endAdjust(commit) {
+  if (!adj) return;
+  const { i, j, value, start } = adj;
+  adj = null;
+  const el = $('#adjust');
+  if (el) el.hidden = true;
+  if (commit) setReps(i, j, value < 0 ? null : value);
+  else renderLog();
+  return start;
+}
+
 document.addEventListener('pointerdown', (ev) => {
   const ring = ev.target.closest('.set[data-act="set"]');
-  if (!ring) return;
-  longPressed = false;
-  clearTimeout(pressTimer);
-  pressTimer = setTimeout(() => {
-    longPressed = true;
-    promptSet(Number(ring.dataset.i), Number(ring.dataset.j));
-  }, 550);
+  if (!ring || ev.button > 0) return;
+  suppressClick = false;
+  clearTimeout(press?.timer);
+  swipe = null;
+  press = {
+    ring,
+    x: ev.clientX,
+    y: ev.clientY,
+    touch: ev.pointerType === 'touch',
+    timer: setTimeout(() => startAdjust(ring, press.y), HOLD_MS),
+  };
 });
-for (const t of ['pointerup', 'pointercancel', 'pointerleave']) {
-  document.addEventListener(t, () => clearTimeout(pressTimer), true);
-}
+
+document.addEventListener('pointermove', (ev) => {
+  if (!adj) {
+    // Rör sig fingret innan hjulet visats är det ett svep – scrolla sidan i stället.
+    if (swipe) {
+      const d = ev.clientY - swipe.lastY;
+      const dt = Math.max(1, ev.timeStamp - swipe.lastT);
+      window.scrollBy(0, -d);
+      swipe.v = 0.7 * (-d / dt) + 0.3 * swipe.v;
+      swipe.lastY = ev.clientY;
+      swipe.lastT = ev.timeStamp;
+    } else if (press && Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > 8) {
+      clearTimeout(press.timer);
+      if (press.touch) {
+        window.scrollBy(0, press.y - ev.clientY);
+        swipe = { lastY: ev.clientY, lastT: ev.timeStamp, v: 0 };
+        suppressClick = true;
+      }
+      press = null;
+    }
+    return;
+  }
+  ev.preventDefault();
+  const steps = Math.round((adj.y0 - ev.clientY) / STEP_PX);
+  const v = Math.max(-adj.step, Math.min(adj.max, adj.start + steps * adj.step));
+  if (v !== adj.value) {
+    adj.value = v;
+    renderAdjust();
+    if (navigator.vibrate && store.settings.vibrate) navigator.vibrate(4);
+  }
+});
+
+document.addEventListener('pointerup', () => {
+  clearTimeout(press?.timer);
+  press = null;
+  if (swipe) {
+    if (Math.abs(swipe.v) > 0.1) glide(swipe.v);
+    swipe = null;
+  }
+  endAdjust(true);
+});
+
+document.addEventListener('pointercancel', () => {
+  clearTimeout(press?.timer);
+  press = null;
+  swipe = null;
+  endAdjust(false);
+});
+
+// Hindra att sidan scrollar medan man drar i hjulet.
+document.addEventListener('touchmove', (ev) => { if (adj) ev.preventDefault(); }, { passive: false });
+
+// Tangentbord: piltangent upp/ner på en markerad ring.
+document.addEventListener('keydown', (ev) => {
+  const ring = ev.target.closest?.('.set[data-act="set"]');
+  if (!ring || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown')) return;
+  ev.preventDefault();
+  const i = Number(ring.dataset.i);
+  const j = Number(ring.dataset.j);
+  const e = draft.exercises[i];
+  const step = L.unitOf(cfgOf(e)) ? 5 : 1;
+  const cur = e.sets[j] ?? e.targetReps;
+  const next = cur + (ev.key === 'ArrowUp' ? step : -step);
+  setReps(i, j, next < 0 ? null : next);
+  $(`.set[data-i="${i}"][data-j="${j}"]`)?.focus();
+});
+
 document.addEventListener('contextmenu', (ev) => {
   if (ev.target.closest('.set')) ev.preventDefault();
 });
