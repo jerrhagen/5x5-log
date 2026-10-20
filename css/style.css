@@ -11,6 +11,10 @@
   --ring: rgba(11, 11, 11, 0.1);
   --primary: #0b0b0b;
   --on-primary: #ffffff;
+  /* Flytande paneler (vilotimer, toast, hjul): mörka i båda teman så de inte bländar */
+  --float: #0b0b0b;
+  --on-float: #ffffff;
+  --float-ring: transparent;
   --good: #0ca30c;
   --good-ink: #006300;
   --good-wash: rgba(12, 163, 12, 0.12);
@@ -45,6 +49,9 @@
     --ring: rgba(255, 255, 255, 0.1);
     --primary: #ffffff;
     --on-primary: #0b0b0b;
+    --float: #2c2c2a;
+    --on-float: #ffffff;
+    --float-ring: rgba(255, 255, 255, 0.14);
     --good-ink: #0ca30c;
     --good-wash: rgba(12, 163, 12, 0.18);
     --bad: #e66767;
@@ -74,6 +81,9 @@
   --ring: rgba(255, 255, 255, 0.1);
   --primary: #ffffff;
   --on-primary: #0b0b0b;
+  --float: #2c2c2a;
+  --on-float: #ffffff;
+  --float-ring: rgba(255, 255, 255, 0.14);
   --good-ink: #0ca30c;
   --good-wash: rgba(12, 163, 12, 0.18);
   --bad: #e66767;
@@ -440,9 +450,10 @@ button { cursor: pointer; }
   min-width: 72px;
   padding: 6px 14px 8px;
   border-radius: 18px;
-  background: var(--primary);
-  color: var(--on-primary);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  background: var(--float);
+  color: var(--on-float);
+  border: 1px solid var(--float-ring);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   pointer-events: none;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
@@ -584,8 +595,9 @@ td { font-variant-numeric: tabular-nums; }
   transform: translateX(-50%);
   bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 8px);
   width: min(608px, calc(100% - 16px));
-  background: var(--primary);
-  color: var(--on-primary);
+  background: var(--float);
+  color: var(--on-float);
+  border: 1px solid var(--float-ring);
   border-radius: 16px;
   padding: 10px 12px 12px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
@@ -593,14 +605,14 @@ td { font-variant-numeric: tabular-nums; }
 }
 .timer[hidden] { display: none; }
 .timer-bar { height: 4px; background: rgba(127, 127, 127, 0.35); border-radius: 999px; overflow: hidden; margin-bottom: 8px; }
-.timer-bar span { display: block; height: 100%; width: 0; background: var(--on-primary); }
+.timer-bar span { display: block; height: 100%; width: 0; background: var(--on-float); }
 .timer-row { display: flex; align-items: center; gap: 8px; }
 .timer-text { flex: 1; display: flex; flex-direction: column; }
 .timer-label { font-size: 12px; opacity: 0.75; }
 .timer-time { font-size: 15px; opacity: 0.8; font-variant-numeric: tabular-nums; }
 .timer-time strong { font-size: 26px; opacity: 1; }
-.timer .btn { color: var(--on-primary); border-color: rgba(127, 127, 127, 0.5); }
-.timer.done { background: var(--good); color: #fff; }
+.timer .btn { color: var(--on-float); border-color: rgba(127, 127, 127, 0.5); }
+.timer.done { background: var(--good); color: #fff; border-color: transparent; }
 .timer.done .timer-bar span { background: #fff; }
 .timer.done .btn { color: #fff; }
 .timer.done .timer-label { opacity: 1; font-weight: 700; font-size: 14px; }
@@ -612,8 +624,9 @@ td { font-variant-numeric: tabular-nums; }
   left: 50%;
   transform: translateX(-50%);
   top: calc(env(safe-area-inset-top) + 12px);
-  background: var(--primary);
-  color: var(--on-primary);
+  background: var(--float);
+  color: var(--on-float);
+  border: 1px solid var(--float-ring);
   padding: 10px 16px;
   border-radius: 12px;
   font-size: 14px;
