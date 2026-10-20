@@ -45,6 +45,53 @@ function lastFor(key, beforeDate) {
     .find((x) => x.e);
 }
 
+// ---------------------------------------------------------------- installera som app
+
+let installPrompt = null;
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); // vi visar en egen knapp i stället för Chromes lilla banner
+  installPrompt = e;
+  if (tab === 'log' || tab === 'settings') render();
+});
+
+window.addEventListener('appinstalled', () => {
+  installPrompt = null;
+  toast('Appen är installerad ✓ Öppna den från hemskärmen.', 4000);
+  render();
+});
+
+async function installApp() {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice.catch(() => null);
+  installPrompt = null;
+  render();
+}
+
+function installBanner() {
+  if (!installPrompt || isStandalone() || store.ui.installDismissed) return '';
+  return `<div class="card install-banner">
+    <img src="icons/icon-192.png" alt="" width="40" height="40">
+    <div><b>Installera som app</b><span class="sub">Ikon på hemskärmen, fullskärm, offline</span></div>
+    <button class="btn primary small" data-act="install">Installera</button>
+    <button class="link" data-act="install-dismiss" aria-label="Dölj">✕</button>
+  </div>`;
+}
+
+function installCard() {
+  if (isStandalone()) return '<section class="card"><h2>App</h2><p class="sub">✓ Du kör 5x5 som installerad app.</p></section>';
+  const how = installPrompt
+    ? '<div class="actions wrap"><button class="btn primary" data-act="install">Installera som app</button></div>'
+    : isIOS
+      ? '<p class="sub">Öppna sidan i <b>Safari</b> → Dela-knappen → <b>Lägg till på hemskärmen</b>.</p>'
+      : `<p class="sub">Öppna Chrome-menyn <b>⋮</b> → <b>Installera app</b> (eller <i>Lägg till på startskärmen → Installera</i>).</p>
+         <p class="sub">Säger Chrome att appen redan är installerad men den inte går att öppna: ta bort den gamla ikonen (håll inne → Avinstallera) och installera igen.</p>`;
+  return `<section class="card"><h2>Installera som app</h2>${how}</section>`;
+}
+
 // ---------------------------------------------------------------- vy: pass
 
 function setsLabel(e) {
@@ -101,6 +148,7 @@ function renderLog() {
       <label class="date-field"><span class="sr">Datum</span><input type="date" data-field="date" value="${d.date}"></label>
       ${syncPill()}
     </div>
+    ${installBanner()}
     <button class="deload-toggle" data-act="deload" aria-pressed="${Boolean(d.deload)}">
       <span class="dt-text"><b>Lättare pass</b><small>Deload −${kg(store.settings.deloadPct)} % på alla övningar – för en lugnare period</small></span>
       <span class="switch" aria-hidden="true"></span>
@@ -465,10 +513,12 @@ function renderProgress() {
       <p class="sub">${esc(store.settings.goalNote || '')}${store.settings.goalNote ? ' · ' : ''}Kroppsvikt ${kg(bw)} kg · bästa klarade 5x5-vikt ${range === 'all' ? 'totalt' : `senaste ${RANGES.find((r) => r.id === range).label}`}${range === 'all' ? '' : ' – skuggat = bästa totalt'}. 1RM är uppskattat från dina set (Epleys formel).</p>
       ${goals || '<p class="sub">Ställ in kroppsvikt och faktorer under Inställningar.</p>'}
     </section>
-    ${bwPoints.length >= 2 ? `<section class="card">
+    <section class="card">
       <h2>Kroppsvikt</h2>
-      <div id="chart-bw"></div>
-    </section>` : ''}`;
+      ${bwSummary(bwPoints, bw)}
+      ${bwPoints.length >= 2 ? '<div id="chart-bw"></div>' : ''}
+      <p class="chart-note">Fyll i kroppsvikt längst ner i passvyn när du loggar ett pass, så växer grafen. Senaste värdet används även för målen.</p>
+    </section>`;
 
   const byDate = new Map(inRange.map((s) => [s.date, s]));
   const visible = series.filter((s) => !hidden.has(s.key)).map((s) => ({
@@ -487,9 +537,22 @@ function renderProgress() {
 
   if (bwPoints.length >= 2) {
     lineChart($('#chart-bw'), [{ key: 'bw', name: 'Kroppsvikt', color: 'var(--ink-2)', points: bwPoints }], {
-      label: 'Kroppsvikt över tid', height: 200,
+      label: 'Kroppsvikt över tid', height: 200, zero: false,
     });
   }
+}
+
+function bwSummary(points, current) {
+  if (!points.length) {
+    return `<p class="sub">Ingen kroppsvikt loggad i intervallet. Nuvarande värde för målen: <b>${kg(current)} kg</b>.</p>`;
+  }
+  const first = points[0];
+  const last = points.at(-1);
+  const diff = Math.round((last.y - first.y) * 10) / 10;
+  const change = points.length >= 2
+    ? ` · ${diff > 0 ? '+' : diff < 0 ? '−' : '±'}${kg(Math.abs(diff))} kg sedan ${fmtDate(first.date, { day: 'numeric', month: 'short', year: 'numeric' })}`
+    : '';
+  return `<p class="sub">Senast <b>${kg(last.y)} kg</b> (${fmtDate(last.date, { day: 'numeric', month: 'short' })})${change}</p>`;
 }
 
 function liftStats(sessions) {
@@ -528,6 +591,7 @@ function renderSettings() {
 
   $('#view-settings').innerHTML = `
     <header class="page-head"><h1>Inställningar</h1></header>
+    ${installCard()}
 
     <section class="card">
       <h2>Synk med Google-arket</h2>
@@ -720,6 +784,8 @@ document.addEventListener('click', async (ev) => {
     case 'w-': return changeWeight(i, -1);
     case 'w+': return changeWeight(i, 1);
     case 'deload': return toggleDeload();
+    case 'install': return installApp();
+    case 'install-dismiss': store.ui.installDismissed = true; store.saveUi(); return renderLog();
     case 'use-sug': {
       const e = draft.exercises[i];
       e.weight = L.suggest(otherSessions(), e.key, store.settings, draft.date).weight;

@@ -45,19 +45,23 @@ export function lineChart(container, series, opts = {}) {
   let x0 = Math.min(...all.map((p) => toMs(p.date)));
   let x1 = Math.max(...all.map((p) => toMs(p.date)));
   if (x1 - x0 < 7 * DAY) { x0 -= 3 * DAY; x1 += 3 * DAY; }
+  // Standard: y-axeln börjar på 0. Med opts.zero === false (t.ex. kroppsvikt) zoomas den in på datan.
   const yMaxRaw = Math.max(...all.map((p) => p.y));
-  const yStep = niceStep(yMaxRaw || 1, H < 300 ? 4 : 5);
-  const yMax = Math.ceil((yMaxRaw * 1.05) / yStep) * yStep;
+  const yMinRaw = opts.zero === false ? Math.min(...all.map((p) => p.y)) : 0;
+  const span = Math.max(yMaxRaw - yMinRaw, opts.zero === false ? 2 : 0) || 1;
+  const yStep = niceStep(span, H < 300 ? 4 : 5);
+  const yMin = opts.zero === false ? Math.floor((yMinRaw - span * 0.1) / yStep) * yStep : 0;
+  const yMax = Math.ceil((yMaxRaw + (opts.zero === false ? span * 0.1 : yMaxRaw * 0.05)) / yStep) * yStep;
   const X = (iso) => m.l + ((toMs(iso) - x0) / (x1 - x0)) * iw;
-  const Y = (v) => m.t + ih - (v / yMax) * ih;
+  const Y = (v) => m.t + ih - ((v - yMin) / (yMax - yMin)) * ih;
 
   const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': opts.label || 'Graf' });
   container.appendChild(svg);
 
   // Rutnät + y-axel
   const grid = el('g', { class: 'grid' }, svg);
-  for (let v = 0; v <= yMax + 1e-9; v += yStep) {
-    el('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: v === 0 ? 'baseline' : 'gridline' }, grid);
+  for (let v = yMin; v <= yMax + 1e-9; v += yStep) {
+    el('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: v === yMin ? 'baseline' : 'gridline' }, grid);
     const t = el('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end', class: 'tick' }, grid);
     t.textContent = fmt(v);
   }

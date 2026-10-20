@@ -59,7 +59,7 @@ Appen är helt statisk (HTML/CSS/JS, inga beroenden) och kan ligga var som helst
 
 > GitHub Pages för **privata** repon kräver GitHub Pro. Antingen gör du repot publikt (det innehåller ingen träningsdata, och nyckeln sparas bara på dina enheter) eller så kopplar du repot till t.ex. **Cloudflare Pages** eller **Netlify**, som är gratis även för privata repon. Där behövs inget byggkommando, och mappen som publiceras är roten.
 
-**Installera på mobilen**: öppna adressen. På iPhone väljer du Safari → Dela → *Lägg till på hemskärmen*. På Android väljer du Chrome → ⋮ → *Installera app*.
+**Installera på mobilen**: öppna adressen. På Android visas en **Installera**-knapp direkt i appen (även under Inställningar). På iPhone väljer du Safari → Dela → *Lägg till på hemskärmen*. På Android väljer du Chrome → ⋮ → *Installera app*.
 
 ## Utveckling
 
